@@ -1,0 +1,12 @@
+# Secrets — never commit
+.organizer-key
+.midnight-state.json
+.midnight-wallet-state/
+*.seed
+
+# Dependencies
+node_modules/
+
+# Logs / OS noise
+*.log
+.DS_Store

@@ -69,14 +69,14 @@ cannot link the key to any address or identity.
 - [Midnight network](https://midnight.network) — preprod testnet
 - [Compact](https://docs.midnight.network/compact/) — zero-knowledge smart-contract language
 - Midnight.js SDK (`@midnight-ntwrk/midnight-js-*`) — providers, contract calls, proof submission
-- [Lace](https://www.lace.io/) Midnight wallet — connection, transaction balancing & signing
+- Lace / 1Money (any Midnight dapp-connector wallet) — connection, transaction balancing & signing
 - React 19 + Vite — frontend
 - TypeScript, vitest (contract test suite)
 - Docker (local proof server for development)
 
 ## Prerequisites
 
-- [Lace Midnight wallet extension](https://www.lace.io/) installed (preprod network, funded with tNIGHT from the [faucet](https://midnight-tmnight-preprod.nethermind.dev))
+- A Midnight browser wallet extension — **Lace** or **1Money** — on the preprod network, funded with tNIGHT from the [faucet](https://midnight-tmnight-preprod.nethermind.dev)
 - Node.js v22 (`nvm install 22 && nvm use 22`)
 - Docker running (proof server)
 

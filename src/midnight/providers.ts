@@ -26,7 +26,7 @@ const CONNECT_TIMEOUT_MS = 60_000;
 
 export class WalletNotFoundError extends Error {
   constructor() {
-    super('Midnight Lace wallet extension not found. Install it from https://www.lace.io/');
+    super('No Midnight wallet found. Install Lace (lace.io) or 1Money, then reload this page.');
     this.name = 'WalletNotFoundError';
   }
 }
@@ -49,17 +49,26 @@ const getFirstCompatibleWallet = (): InitialAPI | undefined => {
   if (!window.midnight) return undefined;
   return Object.values(window.midnight).find(
     (wallet): wallet is InitialAPI =>
-      !!wallet && typeof wallet === 'object' && 'apiVersion' in wallet && typeof wallet.apiVersion === 'string',
+      !!wallet &&
+      typeof wallet === 'object' &&
+      'apiVersion' in wallet &&
+      typeof wallet.apiVersion === 'string' &&
+      typeof (wallet as unknown as { connect?: unknown }).connect === 'function',
   );
 };
 
-/** Polls for the injected `window.midnight` connector until Lace responds. */
+/** Polls for the injected `window.midnight` connector until a compatible wallet responds (Lace, 1Money, …). */
 export const waitForConnector = (): Promise<InitialAPI> =>
   new Promise((resolve, reject) => {
     const started = Date.now();
+    let warned = false;
     const poll = () => {
       const api = getFirstCompatibleWallet();
-      if (api && semver.satisfies(api.apiVersion, COMPATIBLE_CONNECTOR_API_VERSION)) {
+      if (api) {
+        if (!semver.satisfies(api.apiVersion, COMPATIBLE_CONNECTOR_API_VERSION) && !warned) {
+          warned = true;
+          console.warn(`Wallet connector API version ${api.apiVersion} differs from tested ${COMPATIBLE_CONNECTOR_API_VERSION}; attempting anyway.`);
+        }
         resolve(api);
         return;
       }

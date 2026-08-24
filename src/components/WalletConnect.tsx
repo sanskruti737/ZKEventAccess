@@ -63,7 +63,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, e
     )}
 
     {status === 'connecting' && (
-      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for Lace… approve the request in your wallet.</p>
+      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Midnight wallet… approve the request in 1Money / Lace.</p>
     )}
 
     {status === 'connected' && (

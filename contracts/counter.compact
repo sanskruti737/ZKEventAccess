@@ -1,0 +1,101 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+/*
+ * ============================================================================
+ *  ZKEventAccess — counter.compact
+ * ============================================================================
+ *
+ *  A privacy-preserving event access ledger. An organizer issues and revokes
+ *  access credentials; anyone can audit HOW MANY credentials exist, but the
+ *  organizer's signing key itself never touches the chain.
+ *
+ *  WHAT IS PUBLIC (stored on-chain, visible to anyone):
+ *    - counter        : number of access credentials currently issued
+ *    - organizer      : a cryptographic COMMITMENT (hash) of the organizer's
+ *                       secret key — proves authority without revealing the key
+ *    - announcement   : the latest public announcement string, disclosed
+ *                       deliberately by the organizer
+ *
+ *  WHAT IS PRIVATE (private witness data, never posted on-chain):
+ *    - organizerSecret() : the organizer's 32-byte secret key, fetched from
+ *                          local private state via a witness callback each
+ *                          time a circuit runs
+ *    - every circuit argument is private by default in Compact ("private by
+ *      default" model); nothing derived from witness data reaches the ledger
+ *      unless wrapped in an explicit disclose()
+ *
+ *  WHAT THE ORGANIZER PROVES WITHOUT REVEALING:
+ *    That they know the secret key whose persistentHash equals the public
+ *    `organizer` commitment — i.e. "I am the organizer" — via a zero-knowledge
+ *    proof. The proof verifies on-chain while the key stays off-chain.
+ * ============================================================================
+ */
+
+// PRIVATE witness: implemented in TypeScript by the DApp, runs off-chain.
+// Returns the organizer's secret key from local private state.
+witness organizerSecret(): Bytes<32>;
+
+// PUBLIC ledger state ---------------------------------------------------------
+
+// Number of access credentials currently issued (public audit count).
+export ledger counter: Uint<64>;
+
+// Commitment to the organizer's secret key: persistentHash(domain || sk).
+export ledger organizer: Bytes<32>;
+
+// Latest public announcement, published only via explicit disclose().
+export ledger announcement: Opaque<"string">;
+
+// INTERNAL circuit (not exported): derives the public commitment for a given
+// secret key using a domain-separated persistent hash.
+circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "zkEventAccess:organizer"), sk]);
+}
+
+// CONSTRUCTOR: runs once at deployment. Binds the public `organizer`
+// commitment to whatever secret key the deployer's witness supplies.
+// The raw key is used only inside the proof; disclose() is required here
+// because the hash output is (derived) witness data being written to ledger.
+constructor() {
+  const zero: Uint<64> = 0;
+  counter = zero;
+  organizer = disclose(publicKey(organizerSecret()));
+}
+
+// EXPORTED CIRCUITS -----------------------------------------------------------
+
+// Issue one access credential. Only the organizer can do this: the ZK proof
+// attests that their secret key hashes to the stored commitment.
+export circuit increment(): [] {
+  const sk = organizerSecret();
+  assert(organizer == publicKey(sk), "only the organizer can issue access");
+  const one: Uint<64> = 1;
+  counter = (counter + one) as Uint<64>;
+}
+
+// Revoke one access credential. Organizer-only, and never below zero.
+export circuit decrement(): [] {
+  const sk = organizerSecret();
+  assert(organizer == publicKey(sk), "only the organizer can revoke access");
+  const zero: Uint<64> = 0;
+  assert(counter > zero, "counter is already zero");
+  const one: Uint<64> = 1;
+  counter = (counter - one) as Uint<64>;
+}
+
+// Publish a public announcement. DELIBERATE disclosure: the message argument
+// is private-by-default like any circuit input, but here the caller's intent
+// is publication, so it is explicitly wrapped in disclose() before storage.
+export circuit announce(message: Opaque<"string">): [] {
+  const sk = organizerSecret();
+  assert(organizer == publicKey(sk), "only the organizer can announce");
+  announcement = disclose(message);
+}
+
+// Read the current public credential count (no witness needed).
+export circuit read(): Uint<64> {
+  return counter;
+}

@@ -25,6 +25,9 @@ const DISCOVERY_TIMEOUT_MS = 8_000;
 
 const FALLBACK_PROVER_URI =
   (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? 'http://127.0.0.1:6300';
+
+const FALLBACK_INDEXER_HTTP = 'https://indexer.preprod.midnight.network/api/v4/graphql';
+const FALLBACK_INDEXER_WS = 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws';
 const CONNECT_TIMEOUT_MS = 60_000;
 
 export class WalletNotFoundError extends Error {
@@ -139,13 +142,18 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
   // proof server or VITE_PROOF_SERVER_URL in that case.
   const config = await connectedAPI.getConfiguration();
   const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
-  logger.info({ wallet: initialAPI.name, prover: proverUri, indexer: config.indexerUri }, 'wallet configuration resolved');
+  const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
+  const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
+  logger.info(
+    { wallet: initialAPI.name, prover: proverUri, indexer: indexerUri, indexerWs: indexerWsUri },
+    'wallet configuration resolved',
+  );
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
   const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
   const keyMaterialProvider = zkConfigProvider;
   const proofProvider = httpClientProofProvider(proverUri, keyMaterialProvider);
-  const publicDataProvider = indexerPublicDataProvider(config.indexerUri, config.indexerWsUri);
+  const publicDataProvider = indexerPublicDataProvider(indexerUri, indexerWsUri);
 
   const shieldedAddresses = await connectedAPI.getShieldedAddresses();
   const address = shieldedAddresses.shieldedAddress;

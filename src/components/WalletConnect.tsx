@@ -40,22 +40,52 @@ export interface WalletConnectProps extends MidnightWalletState {
   readonly onDisconnect: () => void;
 }
 
-/**
- * Wallet connect / disconnect UI.
- *
- * - Shows a clear disconnected state (with install guidance on failure)
- * - Connect triggers the Lace Midnight extension
- * - The connected shielded address is displayed on screen
- */
-export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, walletName, error, onConnect, onDisconnect }) => (
+/** Live check of injected Midnight connectors, shown directly on the page. */
+const useWalletDetection = (active: boolean): string[] | null => {
+  const [detected, setDetected] = React.useState<string[] | null>(null);
+  React.useEffect(() => {
+    if (!active) return undefined;
+    setDetected(null);
+    const timer = setInterval(() => {
+      const m = (window as unknown as { midnight?: Record<string, unknown> }).midnight;
+      const wallets = m
+        ? Object.values(m).filter(
+            (w): w is { name?: string; apiVersion?: string } =>
+              !!w && typeof w === 'object' && 'apiVersion' in w,
+          )
+        : [];
+      setDetected(wallets.map((w) => `${w.name ?? 'unknown wallet'} (API ${w.apiVersion})`));
+      clearInterval(timer);
+    }, 400);
+    return () => clearInterval(timer);
+  }, [active]);
+  return detected;
+};
+
+export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, walletName, error, onConnect, onDisconnect }) => {
+  const detected = useWalletDetection(status === 'disconnected');
+  return (
   <section style={styles.card}>
     <h2 style={styles.title}>LACE WALLET</h2>
 
-    {status === 'disconnected' && !error && (
+    {status === 'disconnected' && (
       <>
-        <p style={{ margin: '0 0 12px', color: '#8b949e', fontSize: 14 }}>
-          Not connected. Connect your Lace Midnight wallet to interact with the event contract.
-        </p>
+        {error ? (
+          <p style={styles.error}>⚠ {error}</p>
+        ) : (
+          <p style={{ margin: '0 0 12px', color: '#8b949e', fontSize: 14 }}>
+            Not connected. Connect your Midnight wallet to interact with the event contract.
+          </p>
+        )}
+        {detected !== null && detected.length > 0 && !error && (
+          <p style={{ color: '#3fb950', fontSize: 13, marginTop: 8 }}>Detected: {detected.join(', ')}</p>
+        )}
+        {detected !== null && detected.length === 0 && (
+          <p style={{ color: '#d29922', fontSize: 13, marginTop: 8 }}>
+            ⚠ No Midnight wallet detected in this browser. Install <b>1AM</b> (1am.xyz or the Chrome Web Store)
+            or <b>Lace</b>, unlock it, then <b>refresh this page</b>.
+          </p>
+        )}
         <button style={styles.button} onClick={onConnect}>
           Connect Wallet
         </button>
@@ -63,7 +93,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
     )}
 
     {status === 'connecting' && (
-      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Midnight wallet… approve the request in 1Money / Lace.</p>
+      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Midnight wallet… approve the request in 1AM / Lace.</p>
     )}
 
     {status === 'connected' && (
@@ -75,7 +105,6 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
         </button>
       </>
     )}
-
-    {error && <div style={styles.error}>⚠ {error}</div>}
   </section>
-);
+  );
+};

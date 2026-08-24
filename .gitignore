@@ -10,3 +10,5 @@ node_modules/
 # Logs / OS noise
 *.log
 .DS_Store
+dist/
+.vite/

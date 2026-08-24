@@ -50,7 +50,7 @@ Circuits:
 
 ## Tech Stack
 
-- [Midnight network](https://midnight.network) (preview testnet)
+- [Midnight network](https://midnight.network) (preprod testnet — deployed)
 - [Compact](https://docs.midnight.network/compact/) — Midnight's zero-knowledge smart-contract language
 - Node.js v22, npm
 - Docker (runs the local proof server)
@@ -86,19 +86,20 @@ npm run compile
 # 6. Run the test suite
 npm test
 
-# 7. Deploy to preview testnet (creates a wallet, waits for faucet funding)
-npm run deploy -- --network preview
+# 7. Deploy to a testnet (creates a wallet, waits for faucet funding).
+#    This repo is deployed on preprod; use --network preprod (or preview):
+npm run deploy -- --network preprod
 ```
 
-The deploy script prints a wallet address to fund at the preview faucet:
-`https://midnight-tmnight-preview.nethermind.dev`
+The deploy script prints a wallet address to fund at the faucet for the chosen network, e.g. preprod:
+`https://midnight-tmnight-preprod.nethermind.dev`
 It then registers NIGHT for DUST generation and submits the deployment
 transaction, printing the final contract address.
 
 Useful extras:
 
 ```bash
-npm run check-balance -- --network preview   # wallet balance
+npm run check-balance -- --network preprod   # wallet balance
 npm run network preview                      # show/set active network
 ```
 

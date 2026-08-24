@@ -21,7 +21,10 @@ import type { Logger } from './logger';
 
 export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) ?? 'preprod';
 const COMPATIBLE_CONNECTOR_API_VERSION = '4.x';
-const DISCOVERY_TIMEOUT_MS = 1_500;
+const DISCOVERY_TIMEOUT_MS = 8_000;
+
+const FALLBACK_PROVER_URI =
+  (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? 'http://127.0.0.1:6300';
 const CONNECT_TIMEOUT_MS = 60_000;
 
 export class WalletNotFoundError extends Error {
@@ -86,6 +89,8 @@ export interface ProvidersBundle {
   readonly connectedAPI: ConnectedAPI;
   /** Bech32m shielded address shown in the UI. */
   readonly address: string;
+  /** Wallet display name (e.g. "Lace", "1AM"). */
+  readonly walletName: string;
 }
 
 let cached: Promise<ProvidersBundle> | undefined;
@@ -129,14 +134,17 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
     throw new NetworkMismatchError(NETWORK_ID, connectedNetwork);
   }
 
-  // The Lace configuration tells us which indexer/prover endpoints to use.
+  // The wallet configuration tells us which indexer/prover endpoints to use.
+  // Some wallets (e.g. 1AM) may omit the prover URI — fall back to a local
+  // proof server or VITE_PROOF_SERVER_URL in that case.
   const config = await connectedAPI.getConfiguration();
-  logger.info({ prover: config.proverServerUri, indexer: config.indexerUri }, 'wallet configuration resolved');
+  const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
+  logger.info({ wallet: initialAPI.name, prover: proverUri, indexer: config.indexerUri }, 'wallet configuration resolved');
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
   const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
   const keyMaterialProvider = zkConfigProvider;
-  const proofProvider = httpClientProofProvider(config.proverServerUri!, keyMaterialProvider);
+  const proofProvider = httpClientProofProvider(proverUri, keyMaterialProvider);
   const publicDataProvider = indexerPublicDataProvider(config.indexerUri, config.indexerWsUri);
 
   const shieldedAddresses = await connectedAPI.getShieldedAddresses();
@@ -177,5 +185,5 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
     },
   };
 
-  return { providers, connectedAPI, address };
+  return { providers, connectedAPI, address, walletName: initialAPI.name ?? 'Midnight wallet' };
 };

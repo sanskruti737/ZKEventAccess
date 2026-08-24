@@ -47,7 +47,7 @@ export interface WalletConnectProps extends MidnightWalletState {
  * - Connect triggers the Lace Midnight extension
  * - The connected shielded address is displayed on screen
  */
-export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, error, onConnect, onDisconnect }) => (
+export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, walletName, error, onConnect, onDisconnect }) => (
   <section style={styles.card}>
     <h2 style={styles.title}>LACE WALLET</h2>
 
@@ -68,7 +68,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, e
 
     {status === 'connected' && (
       <>
-        <span style={styles.connected}>● Connected</span>
+        <span style={styles.connected}>● Connected via {walletName ?? 'Midnight wallet'}</span>
         <div style={styles.addressBox}>{address}</div>
         <button style={{ ...styles.button, ...styles.buttonSecondary }} onClick={onDisconnect}>
           Disconnect

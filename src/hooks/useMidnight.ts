@@ -17,6 +17,8 @@ export interface MidnightWalletState {
   readonly status: WalletStatus;
   /** Bech32m shielded address of the connected Lace wallet. */
   readonly address?: string;
+  /** Wallet display name (e.g. "Lace", "1AM"). */
+  readonly walletName?: string;
   readonly error?: string;
 }
 
@@ -34,7 +36,7 @@ export const useMidnight = () => {
     try {
       const b = await connectAndGetProviders(logger);
       bundle.current = b;
-      setState({ status: 'connected', address: b.address });
+      setState({ status: 'connected', address: b.address, walletName: b.walletName });
     } catch (err) {
       if (err instanceof WalletNotFoundError) {
         setState({ status: 'disconnected', error: err.message });

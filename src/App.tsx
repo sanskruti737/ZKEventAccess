@@ -35,6 +35,7 @@ const App: React.FC = () => {
       <WalletConnect
         status={wallet.status}
         address={wallet.address}
+        walletName={wallet.walletName}
         error={wallet.error}
         onConnect={() => void wallet.connect()}
         onDisconnect={wallet.disconnect}

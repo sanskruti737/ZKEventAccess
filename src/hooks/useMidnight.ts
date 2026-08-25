@@ -29,6 +29,7 @@ export interface MidnightWalletState {
 export const useMidnight = () => {
   const [state, setState] = useState<MidnightWalletState>({ status: 'disconnected' });
   const bundle = useRef<ProvidersBundle | undefined>(undefined);
+  const autoTried = useRef(false);
 
   const connect = useCallback(async () => {
     if (bundle.current) return;
@@ -54,6 +55,21 @@ export const useMidnight = () => {
     }
   }, []);
 
+  /** Silently re-establish an already-authorized connection after a page reload. */
+  const autoConnect = useCallback(() => {
+    if (autoTried.current || bundle.current) return;
+    autoTried.current = true;
+    (async () => {
+      try {
+        const b = await connectAndGetProviders(logger);
+        bundle.current = b;
+        setState({ status: 'connected', address: b.address, walletName: b.walletName });
+      } catch {
+        // Stay quietly disconnected — the user can click Connect Wallet manually.
+      }
+    })();
+  }, []);
+
   const disconnect = useCallback(() => {
     resetConnection();
     bundle.current = undefined;
@@ -63,5 +79,5 @@ export const useMidnight = () => {
   /** Internal accessor for components that need the provider bundle. */
   const getBundle = useCallback(() => bundle.current, []);
 
-  return { ...state, connect, disconnect, getBundle };
+  return { ...state, connect, disconnect, getBundle, autoConnect };
 };

@@ -22,6 +22,11 @@ const styles: Record<string, React.CSSProperties> = {
 const App: React.FC = () => {
   const wallet = useMidnight();
 
+  React.useEffect(() => {
+    wallet.autoConnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <main style={styles.page}>
       <header style={styles.header}>

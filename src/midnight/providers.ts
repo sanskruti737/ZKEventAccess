@@ -128,19 +128,37 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
     throw new UserRejectedError();
   }
 
-  const status = await connectedAPI.getConnectionStatus();
-  if (status.status !== 'connected') {
-    throw new UserRejectedError();
-  }
-  const connectedNetwork = (status as { networkId?: string }).networkId;
-  if (connectedNetwork !== undefined && connectedNetwork !== NETWORK_ID) {
-    throw new NetworkMismatchError(NETWORK_ID, connectedNetwork);
+  // Some wallets resolve connect() before approval completes or return
+  // differently-shaped status objects — treat a resolved connect() as success
+  // and only use status/network info when it matches the expected shape.
+  try {
+    const status = await connectedAPI.getConnectionStatus();
+    const connectedNetwork = (status as { networkId?: string } | undefined)?.networkId;
+    const isConnected =
+      typeof status === 'object' && status !== null && 'status' in (status as object)
+        ? (status as { status?: unknown }).status === 'connected'
+        : true;
+    logger.info({ status }, 'connection status');
+    if (!isConnected) throw new UserRejectedError();
+    if (typeof connectedNetwork === 'string' && connectedNetwork !== NETWORK_ID) {
+      logger.warn(
+        `wallet reports network "${connectedNetwork}" while app expects "${NETWORK_ID}" — continuing`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof UserRejectedError) throw err;
+    logger.warn({ err }, 'could not read connection status — continuing anyway');
   }
 
   // The wallet configuration tells us which indexer/prover endpoints to use.
   // Some wallets (e.g. 1AM) may omit the prover URI — fall back to a local
   // proof server or VITE_PROOF_SERVER_URL in that case.
-  const config = await connectedAPI.getConfiguration();
+  let config: Partial<{ proverServerUri?: string; indexerUri?: string; indexerWsUri?: string }> = {};
+  try {
+    config = (await connectedAPI.getConfiguration()) ?? {};
+  } catch (err) {
+    logger.warn({ err }, 'getConfiguration failed — using fallback endpoints');
+  }
   const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
@@ -155,8 +173,18 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
   const proofProvider = httpClientProofProvider(proverUri, keyMaterialProvider);
   const publicDataProvider = indexerPublicDataProvider(indexerUri, indexerWsUri);
 
-  const shieldedAddresses = await connectedAPI.getShieldedAddresses();
-  const address = shieldedAddresses.shieldedAddress;
+  let address = 'unknown';
+  let coinPublicKey = '';
+  let encryptionPublicKey = '';
+  try {
+    const shieldedAddresses = await connectedAPI.getShieldedAddresses();
+    address = shieldedAddresses.shieldedAddress ?? 'unknown';
+    coinPublicKey = shieldedAddresses.shieldedCoinPublicKey ?? '';
+    encryptionPublicKey = shieldedAddresses.shieldedEncryptionPublicKey ?? '';
+  } catch (err) {
+    logger.error({ err }, 'getShieldedAddresses failed');
+    throw new Error('Connected, but the wallet did not return your address. Try unlocking 1AM fully and reconnecting.');
+  }
 
   const providers: CounterProviders = {
     privateStateProvider,
@@ -165,10 +193,10 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
     publicDataProvider,
     walletProvider: {
       getCoinPublicKey(): string {
-        return shieldedAddresses.shieldedCoinPublicKey;
+        return coinPublicKey;
       },
       getEncryptionPublicKey(): string {
-        return shieldedAddresses.shieldedEncryptionPublicKey;
+        return encryptionPublicKey;
       },
       balanceTx: async (tx: UnboundTransaction, ttl?: Date): Promise<FinalizedTransaction> => {
         void ttl;

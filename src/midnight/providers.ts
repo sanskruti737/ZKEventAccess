@@ -32,7 +32,7 @@ const CONNECT_TIMEOUT_MS = 60_000;
 
 export class WalletNotFoundError extends Error {
   constructor() {
-    super('No Midnight wallet found. Install Lace (lace.io) or 1Money, then reload this page.');
+    super('No Midnight wallet found. Install Lace (lace.io) or 1AM, then reload this page.');
     this.name = 'WalletNotFoundError';
   }
 }
@@ -63,7 +63,7 @@ const getFirstCompatibleWallet = (): InitialAPI | undefined => {
   );
 };
 
-/** Polls for the injected `window.midnight` connector until a compatible wallet responds (Lace, 1Money, …). */
+/** Polls for the injected `window.midnight` connector until a compatible wallet responds (Lace, 1AM, …). */
 export const waitForConnector = (): Promise<InitialAPI> =>
   new Promise((resolve, reject) => {
     const started = Date.now();

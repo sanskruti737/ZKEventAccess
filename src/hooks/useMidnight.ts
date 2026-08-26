@@ -2,11 +2,15 @@ import { useCallback, useRef, useState } from 'react';
 import {
   connectAndGetProviders,
   resetConnection,
+  getDetectedWallet,
+  startWalletDetection,
+  NETWORK_ID,
   NetworkMismatchError,
   UserRejectedError,
   WalletNotFoundError,
   type ProvidersBundle,
 } from '../midnight/providers';
+import type { InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
 import { consoleLogger, type Logger } from '../midnight/logger';
 
 const logger: Logger = consoleLogger('info');
@@ -15,59 +19,70 @@ export type WalletStatus = 'disconnected' | 'connecting' | 'connected';
 
 export interface MidnightWalletState {
   readonly status: WalletStatus;
-  /** Bech32m shielded address of the connected Lace wallet. */
   readonly address?: string;
-  /** Wallet display name (e.g. "Lace", "1AM"). */
   readonly walletName?: string;
   readonly error?: string;
 }
 
-/**
- * React hook managing the Lace wallet connection lifecycle:
- * connect, disconnect, and friendly error mapping.
- */
 export const useMidnight = () => {
   const [state, setState] = useState<MidnightWalletState>({ status: 'disconnected' });
   const bundle = useRef<ProvidersBundle | undefined>(undefined);
   const autoTried = useRef(false);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(() => {
     if (bundle.current) return;
+    resetConnection();
+    const wallet = getDetectedWallet();
+    if (!wallet) {
+      setState({ status: 'disconnected', error: 'No wallet detected yet. Make sure Lace is installed, unlocked, and refresh the page.' });
+      return;
+    }
     setState({ status: 'connecting' });
+    console.log('[app] connect clicked, wallet:', wallet.name);
     try {
-      const b = await connectAndGetProviders(logger);
-      bundle.current = b;
-      setState({ status: 'connected', address: b.address, walletName: b.walletName });
+      const connectPromise = wallet.connect(NETWORK_ID);
+      console.log('[app] wallet.connect() called, promise created');
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Connection timed out. Check if the Lace wallet popup was blocked or dismissed.')), 60_000),
+      );
+      const racePromise = Promise.race([connectPromise, timeoutPromise]);
+      connectAndGetProviders(logger, racePromise).then(
+        (b) => {
+          console.log('[app] connected successfully!', b.walletName, b.address?.slice(0, 20));
+          bundle.current = b;
+          setState({ status: 'connected', address: b.address, walletName: b.walletName });
+        },
+        (err) => {
+          console.error('[app] connect failed:', err);
+          if (err instanceof WalletNotFoundError) {
+            setState({ status: 'disconnected', error: err.message });
+          } else if (err instanceof UserRejectedError) {
+            setState({ status: 'disconnected', error: err.message });
+          } else if (err instanceof NetworkMismatchError) {
+            setState({ status: 'disconnected', error: err.message });
+          } else {
+            setState({
+              status: 'disconnected',
+              error: err instanceof Error ? err.message : 'Failed to connect wallet.',
+            });
+          }
+        },
+      );
     } catch (err) {
-      if (err instanceof WalletNotFoundError) {
-        setState({ status: 'disconnected', error: err.message });
-      } else if (err instanceof UserRejectedError) {
-        setState({ status: 'disconnected', error: err.message });
-      } else if (err instanceof NetworkMismatchError) {
-        setState({ status: 'disconnected', error: err.message });
-      } else {
-        logger.error({ err }, 'connect failed');
-        setState({
-          status: 'disconnected',
-          error: err instanceof Error ? err.message : 'Failed to connect wallet.',
-        });
-      }
+      console.error('[app] connect threw synchronously:', err);
+      setState({
+        status: 'disconnected',
+        error: err instanceof Error ? err.message : 'Failed to connect wallet.',
+      });
     }
   }, []);
 
-  /** Silently re-establish an already-authorized connection after a page reload. */
+  /** Silently detect wallet on page load — do NOT call connect() here
+   *  because Lace requires a user gesture (click) to show its popup. */
   const autoConnect = useCallback(() => {
-    if (autoTried.current || bundle.current) return;
+    if (autoTried.current) return;
     autoTried.current = true;
-    (async () => {
-      try {
-        const b = await connectAndGetProviders(logger);
-        bundle.current = b;
-        setState({ status: 'connected', address: b.address, walletName: b.walletName });
-      } catch {
-        // Stay quietly disconnected — the user can click Connect Wallet manually.
-      }
-    })();
+    startWalletDetection();
   }, []);
 
   const disconnect = useCallback(() => {

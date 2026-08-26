@@ -12,7 +12,6 @@ import {
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { ConnectedAPI, type InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
-import semver from 'semver';
 import type { CounterCircuitKeys, CounterProviders } from './counter-api';
 import { COUNTER_PRIVATE_STATE_ID } from './counter-api';
 import type { CounterPrivateState } from '../witnesses.js';
@@ -20,26 +19,23 @@ import { inMemoryPrivateStateProvider } from './in-memory-private-state-provider
 import type { Logger } from './logger';
 
 export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) ?? 'preprod';
-const COMPATIBLE_CONNECTOR_API_VERSION = '4.x';
-const DISCOVERY_TIMEOUT_MS = 8_000;
 
 const FALLBACK_PROVER_URI =
   (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? 'http://127.0.0.1:6300';
 
 const FALLBACK_INDEXER_HTTP = 'https://indexer.preprod.midnight.network/api/v4/graphql';
 const FALLBACK_INDEXER_WS = 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws';
-const CONNECT_TIMEOUT_MS = 60_000;
 
 export class WalletNotFoundError extends Error {
   constructor() {
-    super('No Midnight wallet found. Install Lace (lace.io) or 1AM, then reload this page.');
+    super('No Midnight wallet found. Install Lace (lace.io), disable other wallet extensions (like 1AM), then reload.');
     this.name = 'WalletNotFoundError';
   }
 }
 
 export class UserRejectedError extends Error {
-  constructor() {
-    super('Connection request was rejected in the wallet.');
+  constructor(cause?: string) {
+    super(cause ? `Connection rejected by wallet: ${cause}` : 'Connection request was rejected in the wallet.');
     this.name = 'UserRejectedError';
   }
 }
@@ -51,41 +47,62 @@ export class NetworkMismatchError extends Error {
   }
 }
 
-const getFirstCompatibleWallet = (): InitialAPI | undefined => {
-  if (!window.midnight) return undefined;
-  return Object.values(window.midnight).find(
-    (wallet): wallet is InitialAPI =>
-      !!wallet &&
-      typeof wallet === 'object' &&
-      'apiVersion' in wallet &&
-      typeof wallet.apiVersion === 'string' &&
-      typeof (wallet as unknown as { connect?: unknown }).connect === 'function',
-  );
+const isCompatibleWallet = (wallet: unknown): wallet is InitialAPI =>
+  !!wallet &&
+  typeof wallet === 'object' &&
+  'apiVersion' in wallet &&
+  typeof (wallet as unknown as { apiVersion?: unknown }).apiVersion === 'string' &&
+  typeof (wallet as unknown as { connect?: unknown }).connect === 'function';
+
+const isLace = (wallet: InitialAPI): boolean => {
+  const name = (wallet as unknown as { name?: string }).name?.toLowerCase() ?? '';
+  return name.includes('lace');
 };
 
-/** Polls for the injected `window.midnight` connector until a compatible wallet responds (Lace, 1AM, …). */
-export const waitForConnector = (): Promise<InitialAPI> =>
-  new Promise((resolve, reject) => {
-    const started = Date.now();
-    let warned = false;
-    const poll = () => {
-      const api = getFirstCompatibleWallet();
-      if (api) {
-        if (!semver.satisfies(api.apiVersion, COMPATIBLE_CONNECTOR_API_VERSION) && !warned) {
-          warned = true;
-          console.warn(`Wallet connector API version ${api.apiVersion} differs from tested ${COMPATIBLE_CONNECTOR_API_VERSION}; attempting anyway.`);
-        }
-        resolve(api);
-        return;
-      }
-      if (Date.now() - started > DISCOVERY_TIMEOUT_MS) {
-        reject(new WalletNotFoundError());
-        return;
-      }
-      setTimeout(poll, 100);
-    };
-    poll();
-  });
+const getFirstCompatibleWallet = (): InitialAPI | undefined => {
+  console.log('[wallet] checking window.midnight:', window.midnight);
+  if (!window.midnight) {
+    console.warn('[wallet] window.midnight is undefined — wallet extension not detected');
+    return undefined;
+  }
+  const keys = Object.keys(window.midnight);
+  console.log('[wallet] window.midnight keys:', keys);
+  const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
+  console.log('[wallet] compatible wallets:', allCompatible.map((w) => ({
+    name: (w as any)?.name,
+    apiVersion: w.apiVersion,
+  })));
+
+  const lace = allCompatible.find(isLace);
+  if (lace) {
+    console.log('[wallet] selected Lace wallet:', lace.name, 'API', lace.apiVersion);
+    return lace;
+  }
+
+  if (allCompatible.length > 0) {
+    console.warn('[wallet] Lace not found, falling back to first compatible wallet:', allCompatible[0].name);
+    return allCompatible[0];
+  }
+
+  console.warn('[wallet] found window.midnight but no compatible connector (needs apiVersion + connect)');
+  return undefined;
+};
+
+let detectedWallet: InitialAPI | undefined;
+
+export const getDetectedWallet = (): InitialAPI | undefined => detectedWallet;
+
+export const startWalletDetection = (): void => {
+  const poll = () => {
+    const api = getFirstCompatibleWallet();
+    if (api) {
+      detectedWallet = api;
+      return;
+    }
+    setTimeout(poll, 200);
+  };
+  poll();
+};
 
 export interface ProvidersBundle {
   readonly providers: CounterProviders;
@@ -99,12 +116,12 @@ export interface ProvidersBundle {
 let cached: Promise<ProvidersBundle> | undefined;
 
 /**
- * Connects to Lace (or reuses the existing connection) and initializes all
- * Midnight providers needed to interact with the deployed contract.
+ * Kicks off wallet connect() synchronously (must be called from a user
+ * gesture to avoid Lace popup blocking) and then sets up providers.
  */
-export const connectAndGetProviders = (logger: Logger): Promise<ProvidersBundle> => {
+export const connectAndGetProviders = (logger: Logger, connectedPromise: Promise<ConnectedAPI>): Promise<ProvidersBundle> => {
   if (cached) return cached;
-  cached = initializeProviders(logger).catch((err) => {
+  cached = initializeProviders(logger, connectedPromise).catch((err) => {
     cached = undefined;
     throw err;
   });
@@ -116,56 +133,47 @@ export const resetConnection = (): void => {
   cached = undefined;
 };
 
-const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => {
-  logger.info('initializing providers: waiting for wallet connector');
-  const initialAPI = await waitForConnector();
+const initializeProviders = async (logger: Logger, connectedPromise: Promise<ConnectedAPI>): Promise<ProvidersBundle> => {
+  const initialAPI = detectedWallet;
+  if (!initialAPI) {
+    throw new WalletNotFoundError();
+  }
+  logger.info({ wallet: initialAPI.name }, 'using detected wallet');
+  console.log('[wallet] starting initializeProviders for:', initialAPI.name);
 
   let connectedAPI: ConnectedAPI;
   try {
-    connectedAPI = await initialAPI.connect(NETWORK_ID);
+    console.log('[wallet] awaiting connect promise...');
+    connectedAPI = await connectedPromise;
+    console.log('[wallet] connect resolved, testing channel...');
   } catch (err) {
-    logger.error({ err }, 'wallet connect failed');
-    throw new UserRejectedError();
+    const detail = err instanceof Error ? err.message : String(err);
+    console.error('[wallet] connect threw:', detail);
+    throw new UserRejectedError(detail);
   }
 
-  // Some wallets resolve connect() before approval completes or return
-  // differently-shaped status objects — treat a resolved connect() as success
-  // and only use status/network info when it matches the expected shape.
   try {
     const status = await connectedAPI.getConnectionStatus();
-    const connectedNetwork = (status as { networkId?: string } | undefined)?.networkId;
-    const isConnected =
-      typeof status === 'object' && status !== null && 'status' in (status as object)
-        ? (status as { status?: unknown }).status === 'connected'
-        : true;
-    logger.info({ status }, 'connection status');
-    if (!isConnected) throw new UserRejectedError();
-    if (typeof connectedNetwork === 'string' && connectedNetwork !== NETWORK_ID) {
-      logger.warn(
-        `wallet reports network "${connectedNetwork}" while app expects "${NETWORK_ID}" — continuing`,
-      );
-    }
+    console.log('[wallet] connection status:', JSON.stringify(status));
   } catch (err) {
-    if (err instanceof UserRejectedError) throw err;
-    logger.warn({ err }, 'could not read connection status — continuing anyway');
+    const detail = err instanceof Error ? err.message : String(err);
+    if (/shutdown|closed|used/i.test(detail)) {
+      throw new Error('Lace wallet channel closed. Disable other wallet extensions (1AM), make sure Lace is on Preprod network, then refresh and try again.');
+    }
+    console.warn('[wallet] getConnectionStatus warning:', detail);
   }
 
-  // The wallet configuration tells us which indexer/prover endpoints to use.
-  // Some wallets (e.g. 1AM) may omit the prover URI — fall back to a local
-  // proof server or VITE_PROOF_SERVER_URL in that case.
   let config: Partial<{ proverServerUri?: string; indexerUri?: string; indexerWsUri?: string }> = {};
   try {
     config = (await connectedAPI.getConfiguration()) ?? {};
+    console.log('[wallet] configuration:', JSON.stringify(config));
   } catch (err) {
-    logger.warn({ err }, 'getConfiguration failed — using fallback endpoints');
+    console.warn('[wallet] getConfiguration failed — using fallback endpoints:', err);
   }
   const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
-  logger.info(
-    { wallet: initialAPI.name, prover: proverUri, indexer: indexerUri, indexerWs: indexerWsUri },
-    'wallet configuration resolved',
-  );
+  console.log('[wallet] prover:', proverUri, 'indexer:', indexerUri);
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
   const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
@@ -177,13 +185,16 @@ const initializeProviders = async (logger: Logger): Promise<ProvidersBundle> => 
   let coinPublicKey = '';
   let encryptionPublicKey = '';
   try {
+    console.log('[wallet] calling getShieldedAddresses...');
     const shieldedAddresses = await connectedAPI.getShieldedAddresses();
+    console.log('[wallet] shielded addresses received');
     address = shieldedAddresses.shieldedAddress ?? 'unknown';
     coinPublicKey = shieldedAddresses.shieldedCoinPublicKey ?? '';
     encryptionPublicKey = shieldedAddresses.shieldedEncryptionPublicKey ?? '';
+    console.log('[wallet] address:', address.slice(0, 20) + '...');
   } catch (err) {
-    logger.error({ err }, 'getShieldedAddresses failed');
-    throw new Error('Connected, but the wallet did not return your address. Try unlocking 1AM fully and reconnecting.');
+    console.error('[wallet] getShieldedAddresses failed:', err);
+    throw new Error('Connected, but the wallet did not return your address. Try reconnecting.');
   }
 
   const providers: CounterProviders = {

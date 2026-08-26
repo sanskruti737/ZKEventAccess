@@ -82,8 +82,8 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
         )}
         {detected !== null && detected.length === 0 && (
           <p style={{ color: '#d29922', fontSize: 13, marginTop: 8 }}>
-            ⚠ No Midnight wallet detected in this browser. Install <b>1AM</b> (1am.xyz or the Chrome Web Store)
-            or <b>Lace</b>, unlock it, then <b>refresh this page</b>.
+            ⚠ No Midnight wallet detected in this browser. Install <b>Lace</b> (lace.io or the Chrome Web Store),
+            unlock it, then <b>refresh this page</b>.
           </p>
         )}
         <button style={styles.button} onClick={onConnect}>
@@ -93,7 +93,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
     )}
 
     {status === 'connecting' && (
-      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Midnight wallet… approve the request in 1AM / Lace.</p>
+      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Lace wallet… approve the request.</p>
     )}
 
     {status === 'connected' && (

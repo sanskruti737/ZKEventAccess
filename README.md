@@ -1,5 +1,7 @@
 # ZK Event Access
 
+![CI](https://github.com/sanskruti737/ZKEventAccess/actions/workflows/ci.yml/badge.svg)
+
 > A privacy-preserving event access dApp on Midnight: anyone can audit the credential count on-chain, but the organizer's secret key never leaves their device — every state change is proven locally with zero-knowledge proofs and submitted from the browser via Lace.
 
 ## Live Demo

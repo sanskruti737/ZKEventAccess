@@ -54,17 +54,20 @@ export const useMidnight = () => {
         },
         (err) => {
           console.error('[app] connect failed:', err);
+          const msg = err instanceof Error ? err.message : 'Failed to connect wallet.';
           if (err instanceof WalletNotFoundError) {
-            setState({ status: 'disconnected', error: err.message });
+            setState({ status: 'disconnected', error: msg });
           } else if (err instanceof UserRejectedError) {
-            setState({ status: 'disconnected', error: err.message });
+            setState({ status: 'disconnected', error: msg });
           } else if (err instanceof NetworkMismatchError) {
-            setState({ status: 'disconnected', error: err.message });
-          } else {
+            setState({ status: 'disconnected', error: msg });
+          } else if (/shutdown|closed|used/i.test(msg)) {
             setState({
               status: 'disconnected',
-              error: err instanceof Error ? err.message : 'Failed to connect wallet.',
+              error: 'Wallet channel was closed. Open Lace → Settings → Disconnect All Sites, then refresh and try again.',
             });
+          } else {
+            setState({ status: 'disconnected', error: msg });
           }
         },
       );

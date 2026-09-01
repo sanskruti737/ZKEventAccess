@@ -162,4 +162,4 @@ Contract address: `255cd049fd96d934f9fc4880405d9a28fbd924eefc1cb562f9b6eb70ac3cf
 
 ## Demo Video
 
-[PLACEHOLDER — I will add the link after recording]
+[Demo video](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)

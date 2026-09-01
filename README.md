@@ -6,7 +6,7 @@
 
 ## Live Demo
 
-**https://zkevent-access.vercel.app**
+[Click here to watch the live demo](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)
 
 ## Contract Address
 

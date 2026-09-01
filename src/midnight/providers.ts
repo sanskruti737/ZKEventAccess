@@ -28,7 +28,7 @@ const FALLBACK_INDEXER_WS = 'wss://indexer.preprod.midnight.network/api/v4/graph
 
 export class WalletNotFoundError extends Error {
   constructor() {
-    super('No Midnight wallet found. Install Lace (lace.io), disable other wallet extensions (like 1AM), then reload.');
+    super('No Midnight wallet found. Install Lace (lace.io), then reload.');
     this.name = 'WalletNotFoundError';
   }
 }
@@ -59,32 +59,25 @@ const isLace = (wallet: InitialAPI): boolean => {
   return name.includes('lace');
 };
 
-const getFirstCompatibleWallet = (): InitialAPI | undefined => {
-  console.log('[wallet] checking window.midnight:', window.midnight);
-  if (!window.midnight) {
-    console.warn('[wallet] window.midnight is undefined — wallet extension not detected');
-    return undefined;
-  }
-  const keys = Object.keys(window.midnight);
-  console.log('[wallet] window.midnight keys:', keys);
+/**
+ * Synchronously reads window.midnight right now and returns the Lace wallet.
+ * Returns undefined if not found. Does NOT cache — always fresh.
+ */
+export const findFreshLaceWallet = (): InitialAPI | undefined => {
+  if (!window.midnight) return undefined;
   const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
-  console.log('[wallet] compatible wallets:', allCompatible.map((w) => ({
-    name: (w as any)?.name,
-    apiVersion: w.apiVersion,
-  })));
-
   const lace = allCompatible.find(isLace);
-  if (lace) {
-    console.log('[wallet] selected Lace wallet:', lace.name, 'API', lace.apiVersion);
-    return lace;
-  }
+  if (lace) return lace;
+  if (allCompatible.length > 0) return allCompatible[0];
+  return undefined;
+};
 
-  if (allCompatible.length > 0) {
-    console.warn('[wallet] Lace not found, falling back to first compatible wallet:', allCompatible[0].name);
-    return allCompatible[0];
-  }
-
-  console.warn('[wallet] found window.midnight but no compatible connector (needs apiVersion + connect)');
+const getFirstCompatibleWallet = (): InitialAPI | undefined => {
+  if (!window.midnight) return undefined;
+  const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
+  const lace = allCompatible.find(isLace);
+  if (lace) return lace;
+  if (allCompatible.length > 0) return allCompatible[0];
   return undefined;
 };
 
@@ -92,33 +85,38 @@ let detectedWallet: InitialAPI | undefined;
 
 export const getDetectedWallet = (): InitialAPI | undefined => detectedWallet;
 
-export const startWalletDetection = (): void => {
+export const clearDetectedWallet = (): void => {
+  detectedWallet = undefined;
+};
+
+export const startWalletDetection = (): (() => void) => {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   const poll = () => {
+    if (stopped) return;
     const api = getFirstCompatibleWallet();
     if (api) {
       detectedWallet = api;
       return;
     }
-    setTimeout(poll, 200);
+    timer = setTimeout(poll, 200);
   };
   poll();
+  return () => {
+    stopped = true;
+    if (timer !== undefined) clearTimeout(timer);
+  };
 };
 
 export interface ProvidersBundle {
   readonly providers: CounterProviders;
   readonly connectedAPI: ConnectedAPI;
-  /** Bech32m shielded address shown in the UI. */
   readonly address: string;
-  /** Wallet display name (e.g. "Lace", "1AM"). */
   readonly walletName: string;
 }
 
 let cached: Promise<ProvidersBundle> | undefined;
 
-/**
- * Kicks off wallet connect() synchronously (must be called from a user
- * gesture to avoid Lace popup blocking) and then sets up providers.
- */
 export const connectAndGetProviders = (logger: Logger, connectedPromise: Promise<ConnectedAPI>): Promise<ProvidersBundle> => {
   if (cached) return cached;
   cached = initializeProviders(logger, connectedPromise).catch((err) => {
@@ -128,7 +126,6 @@ export const connectAndGetProviders = (logger: Logger, connectedPromise: Promise
   return cached;
 };
 
-/** Clears cached connection state (local side only; wallet authorization persists). */
 export const resetConnection = (): void => {
   cached = undefined;
 };
@@ -138,17 +135,14 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   if (!initialAPI) {
     throw new WalletNotFoundError();
   }
+
   logger.info({ wallet: initialAPI.name }, 'using detected wallet');
-  console.log('[wallet] starting initializeProviders for:', initialAPI.name);
 
   let connectedAPI: ConnectedAPI;
   try {
-    console.log('[wallet] awaiting connect promise...');
     connectedAPI = await connectedPromise;
-    console.log('[wallet] connect resolved, testing channel...');
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
-    console.error('[wallet] connect threw:', detail);
     throw new UserRejectedError(detail);
   }
 
@@ -158,7 +152,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     if (/shutdown|closed|used/i.test(detail)) {
-      throw new Error('Lace wallet channel closed. Disable other wallet extensions (1AM), make sure Lace is on Preprod network, then refresh and try again.');
+      throw new Error('Lace wallet channel closed. Disable other wallet extensions, refresh, and try again.');
     }
     console.warn('[wallet] getConnectionStatus warning:', detail);
   }
@@ -166,14 +160,12 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   let config: Partial<{ proverServerUri?: string; indexerUri?: string; indexerWsUri?: string }> = {};
   try {
     config = (await connectedAPI.getConfiguration()) ?? {};
-    console.log('[wallet] configuration:', JSON.stringify(config));
-  } catch (err) {
-    console.warn('[wallet] getConfiguration failed — using fallback endpoints:', err);
+  } catch {
+    console.warn('[wallet] getConfiguration failed — using fallback endpoints');
   }
   const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
-  console.log('[wallet] prover:', proverUri, 'indexer:', indexerUri);
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
   const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
@@ -185,15 +177,11 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   let coinPublicKey = '';
   let encryptionPublicKey = '';
   try {
-    console.log('[wallet] calling getShieldedAddresses...');
     const shieldedAddresses = await connectedAPI.getShieldedAddresses();
-    console.log('[wallet] shielded addresses received');
     address = shieldedAddresses.shieldedAddress ?? 'unknown';
     coinPublicKey = shieldedAddresses.shieldedCoinPublicKey ?? '';
     encryptionPublicKey = shieldedAddresses.shieldedEncryptionPublicKey ?? '';
-    console.log('[wallet] address:', address.slice(0, 20) + '...');
-  } catch (err) {
-    console.error('[wallet] getShieldedAddresses failed:', err);
+  } catch {
     throw new Error('Connected, but the wallet did not return your address. Try reconnecting.');
   }
 
@@ -211,7 +199,6 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
       },
       balanceTx: async (tx: UnboundTransaction, ttl?: Date): Promise<FinalizedTransaction> => {
         void ttl;
-        logger.info('balancing transaction via wallet');
         const serializedTx = toHex(tx.serialize());
         const received = await connectedAPI.balanceUnsealedTransaction(serializedTx);
         return Transaction.deserialize<SignatureEnabled, Proof, Binding>(
@@ -226,7 +213,6 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
       submitTx: async (tx: FinalizedTransaction): Promise<TransactionId> => {
         await connectedAPI.submitTransaction(toHex(tx.serialize()));
         const txIdentifiers = tx.identifiers();
-        logger.info({ txIdentifiers }, 'transaction submitted via wallet');
         return txIdentifiers[0];
       },
     },

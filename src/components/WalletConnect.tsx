@@ -78,7 +78,15 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
           </p>
         )}
         {detected !== null && detected.length > 0 && !error && (
-          <p style={{ color: '#3fb950', fontSize: 13, marginTop: 8 }}>Detected: {detected.join(', ')}</p>
+          <p style={{ color: detected.length > 1 ? '#f85149' : '#3fb950', fontSize: 13, marginTop: 8 }}>
+            {detected.length > 1 ? '⚠ Multiple wallets detected: ' : 'Detected: '}
+            {detected.join(', ')}
+            {detected.length > 1 && (
+              <span style={{ display: 'block', marginTop: 4, color: '#f85149' }}>
+                Multiple wallet extensions conflict. Keep only Lace enabled, disable the others, then refresh.
+              </span>
+            )}
+          </p>
         )}
         {detected !== null && detected.length === 0 && (
           <p style={{ color: '#d29922', fontSize: 13, marginTop: 8 }}>

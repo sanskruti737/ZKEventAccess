@@ -45,6 +45,36 @@ const styles: Record<string, React.CSSProperties> = {
   ok: { color: '#3fb950' },
   err: { color: '#f85149' },
   busy: { color: '#d29922' },
+  keySection: {
+    marginTop: 16,
+    padding: '12px 14px',
+    background: '#0d1117',
+    border: '1px solid #30363d',
+    borderRadius: 8,
+  },
+  keyInput: {
+    width: '100%',
+    padding: '8px 10px',
+    borderRadius: 6,
+    border: '1px solid #30363d',
+    background: '#161b22',
+    color: '#e6edf3',
+    fontFamily: 'monospace',
+    fontSize: 12,
+    marginTop: 6,
+    boxSizing: 'border-box' as const,
+  },
+  keyButton: {
+    padding: '6px 14px',
+    borderRadius: 6,
+    border: 'none',
+    fontWeight: 600,
+    fontSize: 12,
+    cursor: 'pointer',
+    color: '#fff',
+    background: '#1f6feb',
+    marginTop: 8,
+  },
 };
 
 type Phase = 'idle' | 'joining' | 'proving' | 'done' | 'error';
@@ -54,20 +84,20 @@ export interface CircuitCallProps {
   readonly getBundle: () => ProvidersBundle | undefined;
 }
 
-/**
- * Circuit call UI for the preprod ZKEventAccess contract.
- *
- * - Proofs are generated locally in the browser (WASM prover)
- * - Only proofs + public effects are submitted on-chain
- * - Private inputs (the organizer secret key) never appear in this UI
- */
+const STORAGE_KEY = 'zkea.organizerKey';
+const HEX64 = /^[0-9a-fA-F]{64}$/;
+
 export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }) => {
   const [api, setApi] = useState<CounterAPI | undefined>(undefined);
   const [ledger, setLedger] = useState<CounterLedgerState | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string | undefined>(undefined);
+  const [hasKey, setHasKey] = useState(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    return stored !== null && HEX64.test(stored);
+  });
+  const [keyInput, setKeyInput] = useState('');
 
-  // Subscribe to the public ledger state once joined.
   useEffect(() => {
     if (!api) return;
     const sub = api.state$.subscribe({
@@ -76,6 +106,22 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     });
     return () => sub.unsubscribe();
   }, [api]);
+
+  const saveKey = () => {
+    const trimmed = keyInput.trim();
+    if (!HEX64.test(trimmed)) {
+      setMessage('Key must be exactly 64 hexadecimal characters (32 bytes).');
+      setPhase('error');
+      return;
+    }
+    localStorage.setItem(STORAGE_KEY, trimmed);
+    window.location.reload();
+  };
+
+  const clearKey = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    window.location.reload();
+  };
 
   const join = async (): Promise<CounterAPI> => {
     if (api) return api;
@@ -98,13 +144,13 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       if (name === 'increment') await counterApi.increment();
       else await counterApi.read();
       setPhase('done');
-      setMessage(`✅ Transaction finalized on ${NETWORK_ID}. Counter refreshes from the chain below.`);
+      setMessage(`Transaction finalized on ${NETWORK_ID}. Counter refreshes from the chain below.`);
     } catch (err) {
       setPhase('error');
       const raw = err instanceof Error ? err.message : String(err);
       setMessage(
         /assert/i.test(raw)
-          ? `⛔ Proof rejected locally: you are not this event's organizer. (${raw})`
+          ? `Assertion failed: your local organizer key does not match the on-chain key. Paste the correct 64-hex key in the field below. (${raw})`
           : `Error: ${raw}`,
       );
     }
@@ -141,8 +187,35 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         </button>
       </div>
 
+      <div style={styles.keySection}>
+        <div style={{ color: '#9fb3c8', fontSize: 13, fontWeight: 600 }}>
+          Organizer Secret Key {hasKey ? '(set)' : '(not set)'}
+        </div>
+        <div style={{ color: '#8b949e', fontSize: 12, marginTop: 4 }}>
+          Paste the 64-char hex key from <code>.organizer-key</code> to issue credentials.
+        </div>
+        {!hasKey ? (
+          <>
+            <input
+              style={styles.keyInput}
+              placeholder="64-char hex secret key (e.g. from .organizer-key)"
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+            />
+            <button style={styles.keyButton} onClick={saveKey}>Save Key</button>
+          </>
+        ) : (
+          <button
+            style={{ ...styles.keyButton, background: '#da3633' }}
+            onClick={clearKey}
+          >
+            Clear Key
+          </button>
+        )}
+      </div>
+
       <div style={styles.privacyNote}>
-        🔒 Proved without revealing your input — the organizer secret key never leaves this device.
+        Proved without revealing your input — the organizer secret key never leaves this device.
       </div>
 
       {!connected && <p style={{ ...styles.status, color: '#8b949e' }}>Connect your wallet to call circuits.</p>}

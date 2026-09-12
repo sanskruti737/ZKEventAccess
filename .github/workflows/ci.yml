@@ -14,20 +14,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js v22
+      - name: Install Node.js v22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: npm install
+        run: npm install
 
-      - name: Compile contract
-        run: npm run compile
+      - name: Install Compact compiler
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          echo "$HOME/.compact/bin" >> $GITHUB_PATH
 
-      - name: Copy ZK assets
-        run: npm run copy-zk-assets
+      - name: compact compile
+        run: compact compile contracts/counter.compact managed/counter
 
-      - name: Run tests
+      - name: Run test suite
         run: npm test
+

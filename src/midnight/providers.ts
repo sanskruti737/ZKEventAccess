@@ -72,6 +72,13 @@ export const findFreshLaceWallet = (): InitialAPI | undefined => {
   return undefined;
 };
 
+export const detectWalletConflicts = (): string[] => {
+  if (!window.midnight) return [];
+  return Object.values(window.midnight)
+    .filter(isCompatibleWallet)
+    .map((w) => (w as unknown as { name?: string }).name ?? 'unknown wallet');
+};
+
 const getFirstCompatibleWallet = (): InitialAPI | undefined => {
   if (!window.midnight) return undefined;
   const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
@@ -163,7 +170,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch {
     console.warn('[wallet] getConfiguration failed — using fallback endpoints');
   }
-  const proverUri = config.proverServerUri || FALLBACK_PROVER_URI;
+  const proverUri = FALLBACK_PROVER_URI || config.proverServerUri;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
 

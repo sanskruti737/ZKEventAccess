@@ -145,7 +145,7 @@ Follow me on X: [https://x.com/sanskrutichz](https://x.com/sanskrutichz)
 ## Level 5 — User Validation
 
 - Target: 50 Preprod users
-- Current: 0 / 50 (see [USERS.md](USERS.md) for wallet addresses)
+- Current: 1 / 50 (see [USERS.md](USERS.md) for wallet addresses)
 - Feedback log and iteration notes: [docs/FEEDBACK.md](docs/FEEDBACK.md)
 - Try the live Preprod demo: [https://zkevent-access.vercel.app](https://zkevent-access.vercel.app)
 

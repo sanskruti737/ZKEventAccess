@@ -170,7 +170,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch {
     console.warn('[wallet] getConfiguration failed — using fallback endpoints');
   }
-  const proverUri = FALLBACK_PROVER_URI || config.proverServerUri;
+  const proverUri: string = (FALLBACK_PROVER_URI || config.proverServerUri) as string;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
 

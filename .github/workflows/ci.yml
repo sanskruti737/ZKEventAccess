@@ -29,6 +29,9 @@ jobs:
           echo "$HOME/.local/bin" >> $GITHUB_PATH
           echo "$HOME/.compact/bin" >> $GITHUB_PATH
 
+      - name: Set default Compact compiler
+        run: compact update 0.31.1
+
       - name: compact compile
         run: compact compile contracts/counter.compact managed/counter
 

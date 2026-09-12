@@ -6,7 +6,9 @@
 
 ## Live Demo
 
-[Click here to watch the live demo](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)
+- **Live Web App:** [https://zkevent-access.vercel.app](https://zkevent-access.vercel.app)
+- **Video Walkthrough:** [Click here to watch the live demo](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)
+
 
 ## Contract Address
 
@@ -39,32 +41,23 @@ Circuits:
 
 ## Privacy Model
 
-- **What is PUBLIC (on-chain, visible to anyone):**
+- PUBLIC:
   - `counter` — how many access credentials are currently issued (`Uint<64>`)
   - `organizer` — a domain-separated hash commitment to the organizer's key (`Bytes<32>`)
   - `announcement` — the latest announcement string, published deliberately
   - Every proof that a state transition was authorized
-
-- **What is PRIVATE (private witness / private state, never on-chain):**
-  - The organizer's 32-byte secret key held by the browser-side private state
-    provider — it never appears in the UI, logs, or network traffic
+- PRIVATE:
+  - The organizer's 32-byte secret key held by the browser-side private state provider — it never appears in the UI, logs, or network traffic
   - All circuit arguments by default (Compact is private-by-default)
-
-- **What the user PROVES without revealing:**
-  - That they know the secret key whose `persistentHash(domain ‖ key)` equals
-    the public `organizer` commitment — i.e. "I am the organizer" — plus that
-    the counter arithmetic is correct, all inside a succinct ZK proof generated
-    locally in the browser.
+- PROVED without revealing:
+  - That the caller knows the secret key whose `persistentHash(domain ‖ key)` equals the public `organizer` commitment — i.e. "I am the organizer" — plus that the counter arithmetic is correct, all inside a succinct ZK proof generated locally in the browser.
 
 ## Privacy Claim
 
-An on-chain observer sees only: the current credential count, the organizer
-*commitment* (an opaque 32-byte hash), any deliberately published announcement,
-and valid proofs that transitions were authorized. They **cannot** see the
-organizer's secret key, cannot derive it from the commitment (domain-separated
-`persistentHash`, preimage-resistant), cannot forge an increment without it
-(the circuit fails during local proof generation before anything is sent), and
-cannot link the key to any address or identity.
+What an on-chain observer sees vs cannot see:
+
+- **What an observer sees:** The current credential count, the organizer *commitment* (an opaque 32-byte hash), any deliberately published announcement, and valid proofs that transitions were authorized.
+- **What an observer cannot see:** The organizer's secret key. An observer cannot derive it from the commitment (domain-separated `persistentHash`, preimage-resistant), cannot forge an increment without it (the circuit fails during local proof generation before anything is sent), and cannot link the key to any address or identity.
 
 ## Tech Stack
 
@@ -82,7 +75,7 @@ cannot link the key to any address or identity.
 - Node.js v22 (`nvm install 22 && nvm use 22`)
 - Docker running (proof server)
 
-## Run Locally
+## Setup & Run Locally
 
 ```bash
 # 1. Clone & enter
@@ -117,36 +110,37 @@ Notes:
   `localStorage.setItem('zkea.organizerKey', '<64-char hex key>')`.
   The key is kept out of the UI by design — only its hash ever touches the chain.
 
-## Deploy the Frontend
+## Run Tests
 
-The repo includes `vercel.json`. Easiest path:
-
-```bash
-npm i -g vercel
-vercel login
-vercel --prod          # from the repo root; framework: Vite is auto-detected
 ```
-
-Or import the GitHub repo at https://vercel.com/new — build command
-`npm run build`, output directory `dist`.
-
-## Test Suite
-
-```bash
 npm test
 ```
 
-9 tests cover circuit logic (organizer authorization, counter arithmetic,
-impostor rejection), state transitions, and privacy guarantees (secret key
-never appears in public artifacts).
+9 tests cover circuit logic (organizer authorization, counter arithmetic, impostor rejection), state transitions, and privacy guarantees (secret key never appears in public artifacts).
 
-## Initial Idea
+## CI/CD
 
-I planned to build a privacy-preserving event access system using Midnight and
-Compact. The system allows authorized users to prove their eligibility to access
-an event without publicly revealing their private information. The project uses
-zero-knowledge proofs and witnesses to keep sensitive data private while
-verifying access securely.
+The automated CI/CD pipeline runs via GitHub Actions on every `push` and `pull_request` targeting the `main` branch.
+
+It executes the following workflow:
+1. **Checkout code:** Checks out repository files using `actions/checkout@v4`.
+2. **Install Node.js v22:** Sets up Node.js v22 with npm caching via `actions/setup-node@v4`.
+3. **npm install:** Installs dependencies from `package.json`.
+4. **compact compile:** Installs the Midnight Compact compiler and compiles `contracts/counter.compact` into TypeScript interfaces, proving/verifier keys, and ZKIR artifacts.
+5. **Run test suite:** Executes `npm test` running 9 automated tests with Vitest, validating circuit authorization, state transitions, and zero-knowledge privacy guarantees.
+
+## Usage Guide
+
+See [docs/USAGE.md](docs/USAGE.md) for a plain-English, step-by-step guide on
+connecting a wallet, issuing credentials, and understanding what stays private.
+
+## Product Proposal
+
+See [PROPOSAL.md](PROPOSAL.md)
+
+## Product X Profile
+
+[PLACEHOLDER — I will add after creating the account]
 
 ## Screenshots
 
@@ -163,3 +157,4 @@ Contract address: `255cd049fd96d934f9fc4880405d9a28fbd924eefc1cb562f9b6eb70ac3cf
 ## Demo Video
 
 [Demo video](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)
+

@@ -140,7 +140,7 @@ See [PROPOSAL.md](PROPOSAL.md)
 
 ## Product X Profile
 
-[PLACEHOLDER — I will add after creating the account]
+Follow me on X: [https://x.com/sanskrutichz](https://x.com/sanskrutichz)
 
 ## Screenshots
 

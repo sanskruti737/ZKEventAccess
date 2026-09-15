@@ -14,7 +14,7 @@
 
 | Network  | Address                                                            |
 |----------|--------------------------------------------------------------------|
-| Preprod  | `255cd049fd96d934f9fc4880405d9a28fbd924eefc1cb562f9b6eb70ac3cf9c3` |
+| Preprod  | `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6fc8e` |
 
 ## What This Does
 
@@ -157,7 +157,7 @@ Follow me on X: [https://x.com/sanskrutichz](https://x.com/sanskrutichz)
 
 ### Deployment to Midnight Preprod
 
-Contract address: `255cd049fd96d934f9fc4880405d9a28fbd924eefc1cb562f9b6eb70ac3cf9c3`
+Contract address: `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6fc8e`
 
 ![Deploy output](docs/screenshot-deploy.svg)
 

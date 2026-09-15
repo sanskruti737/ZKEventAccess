@@ -50,7 +50,7 @@ chain:
 
 Yes — realistic to reach Mainnet by Level 6. The circuit, deployment, proof
 generation, and browser dApp all already work end-to-end on **Preprod**
-(contract `255cd049fd96d934f9fc4880405d9a28fbd924eefc1cb562f9b6eb70ac3cf9c3`,
+(contract `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6fc8e`,
 live demo https://zkevent-access.vercel.app).
 
 Remaining steps are largely configuration and hardening rather than new

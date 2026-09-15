@@ -81,7 +81,7 @@ export const useMidnight = () => {
         } else if (isShutdownError(msg)) {
           setState({
             status: 'disconnected',
-            error: 'Wallet channel keeps shutting down. Disable the 1AM wallet extension, refresh, and try again.',
+            error: 'Wallet channel keeps shutting down. Disable other Midnight wallet extensions (e.g. 1AM) in chrome://extensions, keep only Lace enabled, then refresh and try again.',
           });
         } else {
           setState({ status: 'disconnected', error: msg });

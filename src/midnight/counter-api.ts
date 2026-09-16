@@ -39,16 +39,27 @@ export interface CounterLedgerState {
 }
 
 /**
- * Generates a fresh organizer secret key for private state.
+ * Resolves the organizer secret key (proof witness) from the connected 1AM
+ * wallet's private state — the wallet snap holds `CounterPrivateState` under
+ * `COUNTER_PRIVATE_STATE_ID`. It is never read from or written to
+ * localStorage, and never reaches the UI, `window`, or the network.
  *
- * If the real event organizer has stored their key under
- * `localStorage['zkea.organizerKey']` (64-char hex — see README), it is used so
- * that increment/decrement proofs succeed. The key NEVER reaches the UI or network.
+ * If the connected wallet does not hold organizer private state, a fresh key is
+ * used as the witness and the on-chain organizer assert fails loudly with
+ * "only the organizer can issue access" — the correct, un-weakened behavior
+ * for any wallet that is not the registered organizer.
  */
-const resolveOrganizerSecretKey = (): Uint8Array => {
-  const stored = globalThis.localStorage?.getItem('zkea.organizerKey');
-  if (stored && /^[0-9a-fA-F]{64}$/.test(stored)) {
-    return new Uint8Array(Buffer.from(stored, 'hex'));
+const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<Uint8Array> => {
+  try {
+    const state = (await providers.privateStateProvider.get(COUNTER_PRIVATE_STATE_ID)) as
+      | CounterPrivateState
+      | null;
+    const key = state?.organizerSecretKey;
+    if (key && key.length === 32) {
+      return key;
+    }
+  } catch {
+    // fall through to a fresh witness key (the on-chain assert will reject it loudly)
   }
   return crypto.getRandomValues(new Uint8Array(32));
 };
@@ -104,7 +115,7 @@ export class CounterAPI {
     logger?.info({ joinContract: { contractAddress } }, 'joining deployed counter');
 
     const initialPrivateState: CounterPrivateState = {
-      organizerSecretKey: resolveOrganizerSecretKey(),
+      organizerSecretKey: await resolveOrganizerSecretKey(providers),
     };
 
     const deployed = await findDeployedContract<CounterContract>(providers, {
@@ -123,7 +134,7 @@ export class CounterAPI {
     const deployed = await deployContract(providers, {
       compiledContract: CompiledCounterContract,
       privateStateId: COUNTER_PRIVATE_STATE_ID,
-      initialPrivateState: { organizerSecretKey: resolveOrganizerSecretKey() },
+      initialPrivateState: { organizerSecretKey: await resolveOrganizerSecretKey(providers) },
     });
     return new CounterAPI(deployed, providers, logger);
   }

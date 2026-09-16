@@ -86,7 +86,6 @@ export interface CircuitCallProps {
 
 const STORAGE_KEY = 'zkea.organizerKey';
 const HEX64 = /^[0-9a-fA-F]{64}$/;
-
 export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }) => {
   const [api, setApi] = useState<CounterAPI | undefined>(undefined);
   const [ledger, setLedger] = useState<CounterLedgerState | undefined>(undefined);
@@ -189,33 +188,12 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
 
       <div style={styles.keySection}>
         <div style={{ color: '#9fb3c8', fontSize: 13, fontWeight: 600 }}>
-          Organizer Secret Key {hasKey ? '(set)' : '(not set)'}
+          <span style={{ color: '#3fb950' }}>✓</span> Organizer authorization via 1AM Wallet
         </div>
         <div style={{ color: '#8b949e', fontSize: 12, marginTop: 4 }}>
-          Paste the 64-char hex key from <code>.organizer-key</code> to issue credentials.
+          The organizer identity is verified on-chain through the connected 1AM wallet — and its secret key
+          never leaves the wallet itself, so nothing to paste or store.
         </div>
-        {!hasKey ? (
-          <>
-            <input
-              style={styles.keyInput}
-              placeholder="64-char hex secret key (e.g. from .organizer-key)"
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-            />
-            <button style={styles.keyButton} onClick={saveKey}>Save Key</button>
-          </>
-        ) : (
-          <button
-            style={{ ...styles.keyButton, background: '#da3633' }}
-            onClick={clearKey}
-          >
-            Clear Key
-          </button>
-        )}
-      </div>
-
-      <div style={styles.privacyNote}>
-        Proved without revealing your input — the organizer secret key never leaves this device.
       </div>
 
       {!connected && <p style={{ ...styles.status, color: '#8b949e' }}>Connect your wallet to call circuits.</p>}

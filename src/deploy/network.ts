@@ -208,16 +208,16 @@ export function resolveNetwork(opts: ResolveOptions = {}): ResolveResult {
 
 export const GENESIS_SEED = '0000000000000000000000000000000000000000000000000000000000000001';
 
-// ─── Wallet identity (BIP-39, Lace-compatible) ─────────────────────────────────
+// ─── Wallet identity (BIP-39, 1AM-compatible) ─────────────────────────────────
 //
 // Public-network wallets are mnemonic-first: a 24-word BIP-39 phrase whose
 // seed is derived with the standard mnemonicToSeed PBKDF2 step (empty
-// passphrase). Lace derives seeds the same way, so a phrase generated here
-// restores the identical wallet in Lace and vice versa.
+// passphrase). 1AM derives seeds the same way, so a phrase generated here
+// restores the identical wallet in 1AM and vice versa.
 //
 // IMPORTANT: derivation must stay mnemonicToSeed (64-byte seed). Do NOT
 // switch to mnemonicToEntropy — it also "works" but derives a different
-// wallet from the same words, silently breaking Lace compatibility.
+// wallet from the same words, silently breaking 1AM compatibility.
 
 export function normalizeMnemonic(mnemonic: string): string {
   return mnemonic.trim().toLowerCase().split(/\s+/).join(' ');
@@ -277,7 +277,7 @@ export function getOrCreateWallet(network: NetworkId, opts: SeedOptions = {}): W
     if (!SEED_HEX_RE.test(hex)) {
       throw new Error(
         'MIDNIGHT_WALLET_SEED must be 32-128 hex characters (16-64 whole bytes). ' +
-          'A Lace-compatible BIP-39 seed is 128 hex characters — or set MIDNIGHT_WALLET_MNEMONIC to pass the phrase directly.',
+          'A 1AM-compatible BIP-39 seed is 128 hex characters — or set MIDNIGHT_WALLET_MNEMONIC to pass the phrase directly.',
       );
     }
     return { seed: hex, mnemonic: null, created: false };
@@ -336,7 +336,7 @@ export function formatWalletBackupNotice(
     `    ${wallet.mnemonic}`,
     '',
     '  Write this phrase down — anyone holding it controls the wallet. It also',
-    `  restores the same wallet in Lace, and is saved to ${STATE_FILE_NAME} (gitignored).`,
+    `  restores the same wallet in 1AM, and is saved to ${STATE_FILE_NAME} (gitignored).`,
     '',
   ].join('\n');
 }

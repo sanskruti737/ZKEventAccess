@@ -28,7 +28,7 @@ const FALLBACK_INDEXER_WS = 'wss://indexer.preprod.midnight.network/api/v4/graph
 
 export class WalletNotFoundError extends Error {
   constructor() {
-    super('No Midnight wallet found. Install Lace (lace.io), then reload.');
+    super('No Midnight wallet found. Install the Midnight 1AM wallet (get1am.com), then reload.');
     this.name = 'WalletNotFoundError';
   }
 }
@@ -54,20 +54,21 @@ const isCompatibleWallet = (wallet: unknown): wallet is InitialAPI =>
   typeof (wallet as unknown as { apiVersion?: unknown }).apiVersion === 'string' &&
   typeof (wallet as unknown as { connect?: unknown }).connect === 'function';
 
-const isLace = (wallet: InitialAPI): boolean => {
+const is1AM = (wallet: InitialAPI): boolean => {
   const name = (wallet as unknown as { name?: string }).name?.toLowerCase() ?? '';
-  return name.includes('lace');
+  return name.includes('1am') || name.includes('1-am');
 };
 
 /**
- * Synchronously reads window.midnight right now and returns the Lace wallet.
- * Returns undefined if not found. Does NOT cache — always fresh.
+ * Synchronously reads window.midnight right now and returns the 1AM wallet
+ * (the wallet required by this project — see Req #1). Returns undefined if not
+ * found. Does NOT cache — always fresh.
  */
-export const findFreshLaceWallet = (): InitialAPI | undefined => {
+export const findFresh1AMWallet = (): InitialAPI | undefined => {
   if (!window.midnight) return undefined;
   const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
-  const lace = allCompatible.find(isLace);
-  if (lace) return lace;
+  const oneAM = allCompatible.find(is1AM);
+  if (oneAM) return oneAM;
   if (allCompatible.length > 0) return allCompatible[0];
   return undefined;
 };
@@ -82,8 +83,8 @@ export const detectWalletConflicts = (): string[] => {
 const getFirstCompatibleWallet = (): InitialAPI | undefined => {
   if (!window.midnight) return undefined;
   const allCompatible = Object.values(window.midnight).filter(isCompatibleWallet);
-  const lace = allCompatible.find(isLace);
-  if (lace) return lace;
+  const oneAM = allCompatible.find(is1AM);
+  if (oneAM) return oneAM;
   if (allCompatible.length > 0) return allCompatible[0];
   return undefined;
 };
@@ -159,7 +160,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     if (/shutdown|closed|used/i.test(detail)) {
-      throw new Error('Lace wallet channel closed. Disable other wallet extensions, refresh, and try again.');
+      throw new Error('1AM wallet channel closed. Disable other wallet extensions, refresh, and try again.');
     }
     console.warn('[wallet] getConnectionStatus warning:', detail);
   }

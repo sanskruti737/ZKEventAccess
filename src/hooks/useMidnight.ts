@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   connectAndGetProviders,
   resetConnection,
-  findFreshLaceWallet,
+  findFresh1AMWallet,
   startWalletDetection,
   NETWORK_ID,
   NetworkMismatchError,
@@ -45,8 +45,8 @@ export const useMidnight = () => {
 
   const doConnect = useCallback(async (attempt = 0): Promise<void> => {
     const wallet: InitialAPI | undefined = attempt === 0
-      ? findFreshLaceWallet()
-      : await sleep(RETRY_DELAY_MS).then(() => findFreshLaceWallet());
+      ? findFresh1AMWallet()
+      : await sleep(RETRY_DELAY_MS).then(() => findFresh1AMWallet());
 
     if (!wallet) {
       if (attempt < MAX_RETRIES) {
@@ -58,7 +58,7 @@ export const useMidnight = () => {
     console.log(`[app] connect attempt ${attempt + 1}, wallet: ${wallet.name}`);
     const connectPromise = wallet.connect(NETWORK_ID);
     const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Connection timed out. Lace popup may have been blocked.')), 30_000),
+      setTimeout(() => reject(new Error('Connection timed out. The 1AM wallet popup may have been blocked.')), 30_000),
     );
     resetConnection();
     return connectAndGetProviders(logger, Promise.race([connectPromise, timeoutPromise])).then(

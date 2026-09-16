@@ -66,7 +66,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
   const detected = useWalletDetection(status === 'disconnected');
   return (
   <section style={styles.card}>
-    <h2 style={styles.title}>LACE WALLET</h2>
+    <h2 style={styles.title}>1AM WALLET</h2>
 
     {status === 'disconnected' && (
       <>
@@ -74,8 +74,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
           <p style={styles.error}>⚠ {error}</p>
         ) : (
           <p style={{ margin: '0 0 12px', color: '#8b949e', fontSize: 14 }}>
-            Not connected. Connect your Midnight wallet to interact with the event contract.
-          </p>
+            Not connected. Connect your Midnight wallet to interact with the event contract.          </p>
         )}
         {detected !== null && detected.length > 0 && !error && (
           <p style={{ color: detected.length > 1 ? '#f85149' : '#3fb950', fontSize: 13, marginTop: 8 }}>
@@ -83,14 +82,14 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
             {detected.join(', ')}
             {detected.length > 1 && (
               <span style={{ display: 'block', marginTop: 4, color: '#f85149' }}>
-                Multiple wallet extensions conflict. Keep only Lace enabled, disable the others, then refresh.
+                Multiple wallet extensions conflict. Keep only the 1AM wallet enabled, disable the others, then refresh.
               </span>
             )}
           </p>
         )}
         {detected !== null && detected.length === 0 && (
           <p style={{ color: '#d29922', fontSize: 13, marginTop: 8 }}>
-            ⚠ No Midnight wallet detected in this browser. Install <b>Lace</b> (lace.io or the Chrome Web Store),
+            ⚠ No Midnight wallet detected in this browser. Install <b>1AM</b> (get1am.com or the Chrome Web Store),
             unlock it, then <b>refresh this page</b>.
           </p>
         )}
@@ -101,7 +100,7 @@ export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, w
     )}
 
     {status === 'connecting' && (
-      <p style={{ color: '#d29922', fontSize: 14 }}>⏳ Waiting for your Lace wallet… approve the request.</p>
+      <p style={{ color: '#d29922', fontSize: 14 }}>            ⏳ Waiting for your 1AM wallet… approve the request.</p>
     )}
 
     {status === 'connected' && (

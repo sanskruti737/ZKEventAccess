@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CounterAPI, type CounterLedgerState } from '../midnight/counter-api';
 import { NETWORK_ID } from '../midnight/providers';
 import type { ProvidersBundle } from '../midnight/providers';
@@ -221,11 +221,43 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       );
     } catch (err) {
       setPhase('error');
-      setMessage(`error: ${err instanceof Error ? err.message : String(err)}`);
+      const raw = err instanceof Error ? err.message : String(err);
+      const low =
+        /insufficient|not enough|funds|balance|dust/i.test(raw) &&
+        /rejected|denied|cancel/i.test(raw) === false;
+      const rejected = /rejected|denied|user declined|abort|cancel/i.test(raw);
+      setMessage(
+        rejected
+          ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy new event (organizer)" to try again when ready.`
+          : low
+            ? `Deployment failed: ${raw}. The 1AM wallet needs preprod funds (T$ and DUST) to finalize the deploy transaction. Fund it via the Midnight faucet, then press "Deploy new event (organizer)".`
+            : `Deployment failed: ${raw}`,
+      );
     }
   };
 
   const busy = phase === 'proving' || phase === 'joining';
+
+  // ── Automatic first-run deployment ───────────────────────────────────────────
+  // Root-cause fix for "No event contract address configured": the app only ever
+  // learned an event address from a successful in-browser deploy, but nothing
+  // triggered that deploy except the manual button — so a fresh production
+  // visitor was permanently stuck configuring nothing. Now, when an organizer
+  // wallet connects and no event address is configured yet, we deploy one
+  // automatically (still through the connected 1AM wallet, organizer bound to
+  // that wallet, address persisted) so Issue/Verify work immediately.
+  const autoDeployAttempted = useRef(false);
+  useEffect(() => {
+    if (!connected || api || autoDeployAttempted.current) return;
+    const address = resolveContractAddress();
+    if (address) return; // already configured — auto-join handles the rest
+    const bundle = getBundle();
+    if (!bundle) return;
+    autoDeployAttempted.current = true;
+    console.log('[debug] no event configured — auto-deploying a new event for the connected organizer wallet');
+    void deployNewEvent();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connected, api, getBundle]);
 
   return (
     <section style={styles.card}>

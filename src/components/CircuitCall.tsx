@@ -97,6 +97,43 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     return () => sub.unsubscribe();
   }, [api]);
 
+  // Auto-load the persisted event after a page refresh (or right after the
+  // wallet connects): the address survives in localStorage, but the read-only
+  // `api`/`state$` subscription must be re-established so the public on-chain
+  // credential count renders without requiring a manual button click first.
+  useEffect(() => {
+    if (!connected || api) return;
+    const bundle = getBundle();
+    const contractAddress = resolveContractAddress();
+    if (!bundle || !contractAddress) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const joined = await CounterAPI.join(bundle.providers, contractAddress);
+        if (cancelled) return;
+        console.log('[debug] auto-joined persisted event contract address:', String(joined.contractAddress));
+        setApi(joined);
+        setActiveAddress(String(joined.contractAddress));
+        setPhase('idle');
+        setMessage(undefined);
+      } catch (err) {
+        if (cancelled) return;
+        const raw = err instanceof Error ? err.message : String(err);
+        // The persisted event is not (yet) on chain in this session — e.g. it
+        // was deployed earlier but the indexer needs time, or the address was
+        // changed externally. Keep it configured and guide the user; do not
+        // silently wipe it on a transient indexer failure.
+        setMessage(
+          `Could not auto-load event ${contractAddress.slice(0, 12)}… — ${raw}. If this looks wrong, click ` +
+            `"Deploy new event (organizer)" to register a fresh event for this wallet.`,
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [connected, api, getBundle]);
+
   const join = async (): Promise<CounterAPI> => {
     if (api) return api;
     setPhase('joining');
@@ -128,10 +165,10 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       setMessage(`Generating ZK proof locally (${name}) — this runs in your browser…`);
       if (name === 'increment') {
         await counterApi.increment();
-        setLedger(await counterApi.readLatest());
       } else {
         await counterApi.read();
       }
+      setLedger(await counterApi.readLatest());
       setPhase('done');
       setMessage(`Transaction finalized on ${NETWORK_ID}. Counter refreshes from the chain below.`);
     } catch (err) {

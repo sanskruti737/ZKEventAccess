@@ -12,6 +12,7 @@ import {
 } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { ConnectedAPI, type InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
+import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import type { CounterCircuitKeys, CounterProviders } from './counter-api';
 import { COUNTER_PRIVATE_STATE_ID } from './counter-api';
 import type { CounterPrivateState } from '../witnesses.js';
@@ -19,6 +20,12 @@ import { inMemoryPrivateStateProvider } from './in-memory-private-state-provider
 import type { Logger } from './logger';
 
 export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) ?? 'preprod';
+
+// Configure the global network id before any wallet or contract operation. The
+// Midnight SDK tx builders (createUnprovenDeployTx / createUnprovenLedgerCallTx)
+// call getNetworkId() and throw if setNetworkId() was never invoked; without
+// this, browser deploys fail before a deployment transaction is even built.
+setNetworkId(NETWORK_ID);
 
 const CONFIGURED_PROVER_URI = (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? undefined;
 
@@ -223,6 +230,8 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
     address = shieldedAddresses.shieldedAddress ?? 'unknown';
     coinPublicKey = shieldedAddresses.shieldedCoinPublicKey ?? '';
     encryptionPublicKey = shieldedAddresses.shieldedEncryptionPublicKey ?? '';
+    console.log('[debug] connected 1AM wallet:', initialAPI.name, 'shieldedAddress:', address);
+    console.log('[debug] wallet shieldedCoinPublicKey:', coinPublicKey);
   } catch {
     throw new Error('Connected, but the wallet did not return your address. Try reconnecting.');
   }

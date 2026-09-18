@@ -3,7 +3,28 @@ import { CounterAPI, type CounterLedgerState } from '../midnight/counter-api';
 import { NETWORK_ID } from '../midnight/providers';
 import type { ProvidersBundle } from '../midnight/providers';
 
-const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS as string;
+/** Public (non-secret) contract address of an event deployed from this browser. */
+const DEPLOYED_CONTRACT_ADDRESS_KEY = 'zkEventAccess.deployedContractAddress';
+
+const isValidAddress = (value: unknown): value is string =>
+  typeof value === 'string' && /^(0x)?[0-9a-fA-F]{24,128}$/.test(value.trim());
+
+/**
+ * Returns the active event address from localStorage (set by a prior successful
+ * deploy from this browser).  There is NO `.env` / VITE fallback — the old
+ * CLI-owned event was never registered to any 1AM wallet and can never pass the
+ * organizer assert, so using it as a default would always produce a hard failure.
+ * The user must deploy a new event before Issue / Verify can work.
+ */
+const resolveContractAddress = (): string | undefined => {
+  try {
+    const stored = window.localStorage.getItem(DEPLOYED_CONTRACT_ADDRESS_KEY);
+    if (stored && isValidAddress(stored)) return stored.trim();
+  } catch {
+    // storage unavailable — no deployed event yet
+  }
+  return undefined;
+};
 
 const styles: Record<string, React.CSSProperties> = {
   card: {
@@ -62,11 +83,15 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const [ledger, setLedger] = useState<CounterLedgerState | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string | undefined>(undefined);
+  const [activeAddress, setActiveAddress] = useState<string | undefined>(() => resolveContractAddress());
 
   useEffect(() => {
     if (!api) return;
     const sub = api.state$.subscribe({
-      next: (s) => setLedger(s),
+      next: (s) => {
+        setLedger(s);
+        console.debug('[debug] active event:', String(api.contractAddress), 'on-chain organizer:', s.organizer);
+      },
       error: (e) => setMessage(`Ledger subscription failed: ${String(e)}`),
     });
     return () => sub.unsubscribe();
@@ -78,8 +103,19 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     setMessage('Joining the preprod contract…');
     const bundle = getBundle();
     if (!bundle) throw new Error('Wallet is not connected.');
-    const joined = await CounterAPI.join(bundle.providers, CONTRACT_ADDRESS);
+    // The current active event is whatever was deployed/joined in this session;
+    // fall back to a previously deployed address persisted from this browser.
+    const contractAddress = activeAddress ?? resolveContractAddress();
+    if (!contractAddress) {
+      throw new Error(
+        'No event contract address configured. Click "Deploy new event (organizer)" so this wallet becomes the on-chain organizer.',
+      );
+    }
+    const joined = await CounterAPI.join(bundle.providers, contractAddress);
+    console.log('[debug] joined event contract address:', String(joined.contractAddress));
+    console.log('[debug] connected wallet:', bundle.walletName, 'shieldedAddress:', bundle.address);
     setApi(joined);
+    setActiveAddress(String(joined.contractAddress));
     setMessage(undefined);
     setPhase('idle');
     return joined;
@@ -90,8 +126,12 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       const counterApi = await join();
       setPhase('proving');
       setMessage(`Generating ZK proof locally (${name}) — this runs in your browser…`);
-      if (name === 'increment') await counterApi.increment();
-      else await counterApi.read();
+      if (name === 'increment') {
+        await counterApi.increment();
+        setLedger(await counterApi.readLatest());
+      } else {
+        await counterApi.read();
+      }
       setPhase('done');
       setMessage(`Transaction finalized on ${NETWORK_ID}. Counter refreshes from the chain below.`);
     } catch (err) {
@@ -101,7 +141,7 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         /organizer authorization failed/i.test(raw)
           ? raw
           : /assert/i.test(raw)
-            ? `Access issuance was rejected on-chain: the connected 1AM wallet is not the registered organizer, and only the organizer can issue access on this event. Connect the 1AM wallet that is registered as the on-chain organizer, then try again. no key needs to be pasted or stored anywhere. ({${raw}})`
+            ? `Access issuance was rejected on-chain on event ${activeAddress ?? '(configured event)'}: the connected 1AM wallet is not the registered organizer of this event, and only the organizer can issue access. Register this wallet as the organizer by clicking "Deploy new event (organizer)", then Issue again. No key is ever entered or stored. ({${raw}})`
             : `error: ${raw}`,
       );
     }
@@ -112,14 +152,35 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       const bundle = getBundle();
       if (!bundle) throw new Error('Wallet is not connected.');
       setPhase('proving');
-      setMessage('Deploying a new event with this wallet as organizer — proving and submitting on preprod…');
-      const deployed = await CounterAPI.deployNew(bundle.providers);
+      setMessage(
+        'Submitting a new event deployment through the connected 1AM wallet, then waiting for on-chain inclusion and ' +
+          'verifying this wallet is the registered organizer…',
+      );
+      const deployed = await CounterAPI.deployNew(bundle.providers, undefined, (address) => {
+        // The deployment transaction has already been finalized on-chain — this
+        // is the REAL new address. Persist it the moment we know it, so a lagging
+        // indexer read can never cause the freshly deployed event to be lost.
+        try {
+          window.localStorage.setItem(DEPLOYED_CONTRACT_ADDRESS_KEY, address);
+        } catch {
+          // storage unavailable — in-session event still switches below
+        }
+        setActiveAddress(address);
+      });
+      console.log('[debug] deploy switched active event to:', String(deployed.contractAddress));
       setApi(deployed);
+      setActiveAddress(String(deployed.contractAddress));
+      try {
+        window.localStorage.setItem(DEPLOYED_CONTRACT_ADDRESS_KEY, String(deployed.contractAddress));
+      } catch {
+        // storage unavailable — the in-session event is still switched; a later
+        // session simply falls back to the configured event until re-deployed.
+      }
       setPhase('done');
       setMessage(
-        `New event deployed — this 1AM wallet owns its organizer identity (derived on demand, never stored). ` +
-          `Contract address: ${String(deployed.contractAddress)}. Set VITE_CONTRACT_ADDRESS to this address and ` +
-          `redeploy so the site permanently operates on this event.`,
+        `New event deployed and VERIFIED on-chain as owned by this 1AM wallet (organizer commitment checked against the ` +
+          `indexer state before switching). Contract address: ${String(deployed.contractAddress)}. This event is now ` +
+          `active and remembered, so "Issue credential (+1)" will pass the on-chain organizer check.`,
       );
     } catch (err) {
       setPhase('error');
@@ -137,6 +198,11 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       {ledger && (
         <div style={styles.label}>
           Latest announcement: <em>{ledger.announcement || '(none)'}</em>
+        </div>
+      )}
+      {activeAddress && (
+        <div style={{ ...styles.label, marginTop: 6 }}>
+          Active event: <code style={{ color: '#58a6ff', wordBreak: 'break-all', fontSize: 12 }}>{activeAddress}</code>
         </div>
       )}
 

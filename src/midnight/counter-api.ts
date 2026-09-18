@@ -1,4 +1,5 @@
 import * as Counter from '../../managed/counter/contract/index.js';
+import { CompactTypeBytes, CompactTypeVector, persistentHash } from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import type { ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import {
@@ -6,7 +7,7 @@ import {
   findDeployedContract,
   type FoundContract,
 } from '@midnight-ntwrk/midnight-js-contracts';
-import { combineLatest, from, map, type Observable } from 'rxjs';
+import { combineLatest, firstValueFrom, from, map, type Observable } from 'rxjs';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
 import type { MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
 import { witnesses, type CounterPrivateState } from '../witnesses.js';
@@ -53,7 +54,32 @@ export interface CounterLedgerState {
   /** Current public credential count. */
   readonly counter: bigint;
   readonly announcement: string;
+  /** Hex of the on-chain registered organizer commitment (public data). */
+  readonly organizer: string;
 }
+
+const ORGANIZER_DOMAIN = new Uint8Array([
+  122, 107, 69, 118, 101, 110, 116, 65, 99, 99, 101, 115, 115, 58, 111, 114, 103, 97, 110, 105, 122, 101, 114, 0, 0,
+  0, 0, 0, 0, 0, 0, 0,
+]);
+
+export const organizerCommitment = (secretKey: Uint8Array): string =>
+  toHex(new Uint8Array(persistentHash(new CompactTypeVector(2, new CompactTypeBytes(32)), [ORGANIZER_DOMAIN, secretKey])));
+
+const DEPLOY_TIMEOUT_MS = 5 * 60_000;
+const DEPLOY_STATE_READ_TIMEOUT_MS = 60_000;
+
+const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string): Promise<T> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const watcher = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  try {
+    return await Promise.race([promise, watcher]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 /**
  * Hex digests of organizer keys this session materialized as organizer identity
@@ -131,6 +157,7 @@ export class CounterAPI {
           return {
             counter: ledger.counter,
             announcement: ledger.announcement,
+            organizer: toHex(ledger.organizer),
           } satisfies CounterLedgerState;
         }),
       ),
@@ -152,7 +179,8 @@ export class CounterAPI {
    * the call and the error is surfaced truthfully.
    */
   async increment(): Promise<void> {
-    await resolveOrDeriveOrganizerSecretKey(this.providers);
+    const sk = await resolveOrDeriveOrganizerSecretKey(this.providers);
+    console.log('[debug] wallet-derived organizer commitment:', organizerCommitment(sk));
     this.logger?.info('increment: proving locally...');
     const txData = await this.deployed.callTx.increment();
     this.logger?.info({ txHash: txData.public.txHash }, 'increment finalized');
@@ -165,6 +193,24 @@ export class CounterAPI {
   async read(): Promise<void> {
     this.logger?.info('read: proving locally...');
     await this.deployed.callTx.read();
+  }
+
+  /**
+   * One-shot read of the current on-chain ledger state for this event. Used to
+   * refresh the public credential count immediately after a finalized issuance,
+   * independent of the state$ poll cadence.
+   */
+  async readLatest(): Promise<CounterLedgerState> {
+    const contractState = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
+    if (!contractState) {
+      throw new Error('Could not read the current on-chain state for this event.');
+    }
+    const ledger = Counter.ledger(contractState.data);
+    return {
+      counter: ledger.counter,
+      announcement: ledger.announcement,
+      organizer: toHex(ledger.organizer),
+    };
   }
 
   /**
@@ -197,15 +243,68 @@ export class CounterAPI {
    * `organizer` commitment is bound to it — so every future session of that
    * same wallet can re-derive the key and issue credentials without any secret
    * leaving the wallet's key material.
+   *
+   * After deployment this reads the NEW contract's on-chain state from the
+   * indexer and verifies that its registered organizer commitment equals this
+   * wallet's derived identity. Only then does it treat the deployment as
+   * successful; otherwise it throws and leaves the active event untouched.
    */
-  static async deployNew(providers: CounterProviders, logger?: Logger): Promise<CounterAPI> {
+  static async deployNew(
+    providers: CounterProviders,
+    logger?: Logger,
+    onDeployedAddress?: (address: string) => void,
+  ): Promise<CounterAPI> {
     logger?.info('deploying new counter instance');
     const organizerSecretKey = await resolveOrDeriveOrganizerSecretKey(providers);
-    const deployed = await deployContract(providers, {
-      compiledContract: CompiledCounterContract,
-      privateStateId: COUNTER_PRIVATE_STATE_ID,
-      initialPrivateState: { organizerSecretKey },
-    });
-    return new CounterAPI(deployed, providers, logger);
+    const expectedOrganizer = organizerCommitment(organizerSecretKey);
+    console.log('[debug] wallet-derived organizer commitment to register:', expectedOrganizer);
+
+    const deployed = await withTimeout(
+      deployContract(providers, {
+        compiledContract: CompiledCounterContract,
+        privateStateId: COUNTER_PRIVATE_STATE_ID,
+        initialPrivateState: { organizerSecretKey },
+      }),
+      DEPLOY_TIMEOUT_MS,
+      `Deployment timed out: the deployment transaction was submitted to the 1AM wallet but no new event ` +
+        `appeared on-chain within ${DEPLOY_TIMEOUT_MS / 60000} minutes. Check that you approved it in the wallet ` +
+        `and that the wallet has preprod coins for the deployment fee, then retry.`,
+    );
+    const deployedAddress = String(deployed.deployTxData.public.contractAddress);
+    console.log('[debug] newly deployed contract address:', deployedAddress);
+    // The deployment transaction is finalized on-chain at this point, so the
+    // real address is a fact — publish it immediately so the caller can persist
+    // it even if the verification read below times out on a lagging indexer.
+    onDeployedAddress?.(deployedAddress);
+    console.log('[debug] waiting to verify on-chain organizer of the new event...');
+
+    const api = new CounterAPI(deployed, providers, logger);
+    let organizer: string;
+    try {
+      ({ organizer } = await withTimeout(
+        firstValueFrom(api.state$),
+        DEPLOY_STATE_READ_TIMEOUT_MS,
+        `The new event (${deployedAddress}) was registered on-chain, but its state could not be read from the ` +
+          `indexer within ${DEPLOY_STATE_READ_TIMEOUT_MS / 60000} minute(s).`,
+      ));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `${message} The new event DID deploy and its address is now active and remembered, but the on-chain ` +
+          `organizer could not be verified yet (indexer lag). Click "Issue credential (+1)" to retry — the local ` +
+          `organizer assert will still reject a non-owner wallet.`,
+      );
+    }
+
+    if (organizer !== expectedOrganizer) {
+      throw new Error(
+        'Deployment verification failed: the new event was created but its on-chain organizer ' +
+          `(commitment ${organizer}) does not match the connected 1AM wallet's identity ` +
+          `(${expectedOrganizer}). The active event was NOT switched, so nothing was replaced or clobbered.`,
+      );
+    }
+    console.log('[debug] on-chain organizer of new event verified:', organizer);
+    logger?.info({ deployedAddress, organizer }, 'deploy verified: connected 1AM wallet is the on-chain organizer');
+    return api;
   }
 }

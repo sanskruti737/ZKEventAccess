@@ -32,19 +32,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   buttonSecondary: { background: '#1f6feb' },
   buttonDisabled: { opacity: 0.55, cursor: 'wait' },
-  privacyNote: {
-    marginTop: 14,
-    fontSize: 12.5,
-    color: '#7ee787',
-    border: '1px dashed #238636',
-    borderRadius: 8,
-    padding: '8px 10px',
-    display: 'inline-block',
+  buttonTertiary: {
+    background: '#1b3f6e',
+    marginTop: 12,
+    gridColumn: '1 / -1',
   },
-  status: { marginTop: 12, fontSize: 13.5 },
-  ok: { color: '#3fb950' },
-  err: { color: '#f85149' },
-  busy: { color: '#d29922' },
   keySection: {
     marginTop: 16,
     padding: '12px 14px',
@@ -52,29 +44,10 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid #30363d',
     borderRadius: 8,
   },
-  keyInput: {
-    width: '100%',
-    padding: '8px 10px',
-    borderRadius: 6,
-    border: '1px solid #30363d',
-    background: '#161b22',
-    color: '#e6edf3',
-    fontFamily: 'monospace',
-    fontSize: 12,
-    marginTop: 6,
-    boxSizing: 'border-box' as const,
-  },
-  keyButton: {
-    padding: '6px 14px',
-    borderRadius: 6,
-    border: 'none',
-    fontWeight: 600,
-    fontSize: 12,
-    cursor: 'pointer',
-    color: '#fff',
-    background: '#1f6feb',
-    marginTop: 8,
-  },
+  status: { marginTop: 12, fontSize: 13.5 },
+  ok: { color: '#3fb950' },
+  err: { color: '#f85149' },
+  busy: { color: '#d29922' },
 };
 
 type Phase = 'idle' | 'joining' | 'proving' | 'done' | 'error';
@@ -84,18 +57,11 @@ export interface CircuitCallProps {
   readonly getBundle: () => ProvidersBundle | undefined;
 }
 
-const STORAGE_KEY = 'zkea.organizerKey';
-const HEX64 = /^[0-9a-fA-F]{64}$/;
 export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }) => {
   const [api, setApi] = useState<CounterAPI | undefined>(undefined);
   const [ledger, setLedger] = useState<CounterLedgerState | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>('idle');
   const [message, setMessage] = useState<string | undefined>(undefined);
-  const [hasKey, setHasKey] = useState(() => {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    return stored !== null && HEX64.test(stored);
-  });
-  const [keyInput, setKeyInput] = useState('');
 
   useEffect(() => {
     if (!api) return;
@@ -105,22 +71,6 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     });
     return () => sub.unsubscribe();
   }, [api]);
-
-  const saveKey = () => {
-    const trimmed = keyInput.trim();
-    if (!HEX64.test(trimmed)) {
-      setMessage('Key must be exactly 64 hexadecimal characters (32 bytes).');
-      setPhase('error');
-      return;
-    }
-    localStorage.setItem(STORAGE_KEY, trimmed);
-    window.location.reload();
-  };
-
-  const clearKey = () => {
-    localStorage.removeItem(STORAGE_KEY);
-    window.location.reload();
-  };
 
   const join = async (): Promise<CounterAPI> => {
     if (api) return api;
@@ -148,10 +98,32 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       setPhase('error');
       const raw = err instanceof Error ? err.message : String(err);
       setMessage(
-        /assert/i.test(raw)
-          ? `Assertion failed: your local organizer key does not match the on-chain key. Paste the correct 64-hex key in the field below. (${raw})`
-          : `Error: ${raw}`,
+        /organizer authorization failed/i.test(raw)
+          ? raw
+          : /assert/i.test(raw)
+            ? `Access issuance was rejected on-chain: the connected 1AM wallet is not the registered organizer, and only the organizer can issue access on this event. Connect the 1AM wallet that is registered as the on-chain organizer, then try again. no key needs to be pasted or stored anywhere. ({${raw}})`
+            : `error: ${raw}`,
       );
+    }
+  };
+
+  const deployNewEvent = async () => {
+    try {
+      const bundle = getBundle();
+      if (!bundle) throw new Error('Wallet is not connected.');
+      setPhase('proving');
+      setMessage('Deploying a new event with this wallet as organizer — proving and submitting on preprod…');
+      const deployed = await CounterAPI.deployNew(bundle.providers);
+      setApi(deployed);
+      setPhase('done');
+      setMessage(
+        `New event deployed — this 1AM wallet owns its organizer identity (derived on demand, never stored). ` +
+          `Contract address: ${String(deployed.contractAddress)}. Set VITE_CONTRACT_ADDRESS to this address and ` +
+          `redeploy so the site permanently operates on this event.`,
+      );
+    } catch (err) {
+      setPhase('error');
+      setMessage(`error: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -183,6 +155,14 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           onClick={() => runCircuit('read')}
         >
           Verify access (read)
+        </button>
+        <button
+          style={{ ...styles.button, ...styles.buttonTertiary, ...(busy ? styles.buttonDisabled : {}) }}
+          disabled={!connected || busy}
+          onClick={() => deployNewEvent()}
+          title="Organizer-only: deploy a new event whose organizer identity is created and held by this connected 1AM wallet session"
+        >
+          Deploy new event (organizer)
         </button>
       </div>
 

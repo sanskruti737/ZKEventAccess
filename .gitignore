@@ -2,6 +2,7 @@
 .organizer-key
 .midnight-state.json
 .midnight-wallet-state/
+.midnight-wallet-state-*/
 *.seed
 
 # Dependencies
@@ -14,3 +15,8 @@ dist/
 .vite/
 .vercel
 .env*
+
+# Local build/runtime state
+.cache/
+midnight-level-db/
+fetch-zk-params.sh

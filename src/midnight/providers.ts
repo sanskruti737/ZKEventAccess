@@ -1,7 +1,7 @@
 import { FetchZkConfigProvider } from '@midnight-ntwrk/midnight-js-fetch-zk-config-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
-import type { UnboundTransaction } from '@midnight-ntwrk/midnight-js-types';
+import { createProofProvider, type ProofProvider, type UnboundTransaction } from '@midnight-ntwrk/midnight-js-types';
 import {
   Transaction,
   type FinalizedTransaction,
@@ -20,8 +20,7 @@ import type { Logger } from './logger';
 
 export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) ?? 'preprod';
 
-const FALLBACK_PROVER_URI =
-  (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? 'http://127.0.0.1:6300';
+const CONFIGURED_PROVER_URI = (import.meta.env.VITE_PROOF_SERVER_URL as string | undefined) ?? undefined;
 
 const FALLBACK_INDEXER_HTTP = 'https://indexer.preprod.midnight.network/api/v4/graphql';
 const FALLBACK_INDEXER_WS = 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws';
@@ -116,6 +115,25 @@ export const startWalletDetection = (): (() => void) => {
   };
 };
 
+/**
+ * Fixed domain message used to derive the wallet-owned organizer secret key.
+ * The connected 1AM wallet signs this exact message; its (deterministic)
+ * signature is hashed to a 32-byte organizer witness key. Same wallet, same
+ * message => same key on every session, so the organizer secret never needs to
+ * be stored, pasted, or generated at random — it lives in the wallet's own key
+ * material and only appears transiently in the browser while a proof is made.
+ */
+const ORGANIZER_AUTH_MESSAGE = 'zkEventAccess:organizer:authorization';
+
+const deriveOrganizerSecretKey = async (api: ConnectedAPI): Promise<Uint8Array> => {
+  const signature = await api.signData(ORGANIZER_AUTH_MESSAGE, { encoding: 'text', keyType: 'unshielded' });
+  const signatureBytes = fromHex(signature.signature);
+  const plain = new Uint8Array(new ArrayBuffer(signatureBytes.length));
+  plain.set(signatureBytes);
+  const digest = await crypto.subtle.digest('SHA-256', plain);
+  return new Uint8Array(digest);
+};
+
 export interface ProvidersBundle {
   readonly providers: CounterProviders;
   readonly connectedAPI: ConnectedAPI;
@@ -171,14 +189,30 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch {
     console.warn('[wallet] getConfiguration failed — using fallback endpoints');
   }
-  const proverUri: string = (FALLBACK_PROVER_URI || config.proverServerUri) as string;
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
   const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
   const keyMaterialProvider = zkConfigProvider;
-  const proofProvider = httpClientProofProvider(proverUri, keyMaterialProvider);
+
+  let proofProvider: ProofProvider;
+  try {
+    const walletProvingProvider = await connectedAPI.getProvingProvider(keyMaterialProvider);
+    proofProvider = createProofProvider(walletProvingProvider);
+    console.log('[wallet] ZK proving delegated to the 1AM wallet');
+  } catch (err) {
+    const fallbackUri = CONFIGURED_PROVER_URI ?? config.proverServerUri;
+    if (!fallbackUri) {
+      throw new Error(
+        'No proving service available: the 1AM wallet did not provide a proving provider and no ' +
+          'VITE_PROOF_SERVER_URL is configured.',
+      );
+    }
+    console.warn('[app] 1AM wallet proving unavailable, using configured proof server:', String(err));
+    proofProvider = httpClientProofProvider(fallbackUri, keyMaterialProvider);
+  }
+
   const publicDataProvider = indexerPublicDataProvider(indexerUri, indexerWsUri);
 
   let address = 'unknown';
@@ -198,6 +232,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
     zkConfigProvider,
     proofProvider,
     publicDataProvider,
+    organizerIdentity: { deriveOrganizerSecretKey: () => deriveOrganizerSecretKey(connectedAPI) },
     walletProvider: {
       getCoinPublicKey(): string {
         return coinPublicKey;

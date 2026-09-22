@@ -163,5 +163,5 @@ Contract address: `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6f
 
 ## Demo Video
 
-[Demo video](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)
+[Demo video](https://drive.google.com/file/d/1DhO3h5IhJ28Tr3_loHWjTRPbYdtYdoSm/view?usp=sharing)
 

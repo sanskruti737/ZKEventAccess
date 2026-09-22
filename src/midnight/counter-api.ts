@@ -115,25 +115,58 @@ const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<U
 };
 
 /**
+ * In-flight derivation promise for the wallet-owned organizer key.
+ *
+ * Without this single-flight guard, ANY number of concurrent callers that find
+ * no cached session key would each call `api.signData(...)` — and the 1AM
+ * wallet answers concurrent identical signing requests with "Duplicate request
+ * — a similar request is already pending". This guards the ONLY place that
+ * turns wallet signData into the organizer key, so N concurrent callers share
+ * exactly ONE wallet request, and the request is released (nulled) once the
+ * promise settles — success or failure — so a later click starts a fresh one.
+ */
+let organizerKeyDerivation: Promise<Uint8Array> | null = null;
+
+const deriveWalletOrganizerKey = (providers: CounterProviders): Promise<Uint8Array> => {
+  if (!providers.organizerIdentity) {
+    return Promise.reject(
+      new Error(
+        'Organizer authorization failed: the connected 1AM wallet does not expose a wallet-owned organizer identity, ' +
+          'so it cannot issue credentials. Only the wallet that owns the event organizer identity can increment.',
+      ),
+    );
+  }
+  if (!organizerKeyDerivation) {
+    organizerKeyDerivation = providers.organizerIdentity
+      .deriveOrganizerSecretKey()
+      .then((derived) => {
+        if (derived.length !== 32) {
+          throw new Error('Organizer authorization failed: the 1AM wallet produced an invalid organizer key length.');
+        }
+        return derived;
+      })
+      .finally(() => {
+        organizerKeyDerivation = null;
+      });
+  }
+  return organizerKeyDerivation;
+};
+
+/**
  * Resolves the organizer secret key from the wallet-bound private state provider
  * if this session provisioned one, otherwise derives it deterministically from
  * the connected 1AM wallet. The key is stored only in the private state provider
  * (never localStorage, never the UI, never logged) and is used as the proof
  * witness. There is no random-key fallback.
+ *
+ * The derivation itself is single-flight (see {@link deriveWalletOrganizerKey}):
+ * concurrent callers share one wallet signData request, so a single user action
+ * can never fan out into duplicate 1AM popups.
  */
 const resolveOrDeriveOrganizerSecretKey = async (providers: CounterProviders): Promise<Uint8Array> => {
   const existing = await resolveOrganizerSecretKey(providers);
   if (existing) return existing;
-  if (!providers.organizerIdentity) {
-    throw new Error(
-      'Organizer authorization failed: the connected 1AM wallet does not expose a wallet-owned organizer identity, ' +
-        'so it cannot issue credentials. Only the wallet that owns the event organizer identity can increment.',
-    );
-  }
-  const derived = await providers.organizerIdentity.deriveOrganizerSecretKey();
-  if (derived.length !== 32) {
-    throw new Error('Organizer authorization failed: the 1AM wallet produced an invalid organizer key length.');
-  }
+  const derived = await deriveWalletOrganizerKey(providers);
   organizerSessionKeys.add(toHex(derived));
   await providers.privateStateProvider.set(COUNTER_PRIVATE_STATE_ID, { organizerSecretKey: derived });
   return derived;

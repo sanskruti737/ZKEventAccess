@@ -85,6 +85,22 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const [message, setMessage] = useState<string | undefined>(undefined);
   const [activeAddress, setActiveAddress] = useState<string | undefined>(() => resolveContractAddress());
 
+  // Per-action in-flight locks (duplicate-request fix). Each user action owns an
+  // independent lock so that:
+  //   - ONE user click (or one effect run) issues exactly ONE wallet request;
+  //     a second click while the same action is pending is a harmless no-op.
+  //   - Verify access (a pure read, organizer-free) stays clickable and
+  //     functional even while an Issue request is pending — no shared `busy`
+  //     flag can disable it.
+  // The refs gate synchronous double-clicks; the `*Pending` state ONLY drives
+  // button disabled/styling so React re-renders the controls.
+  const issueInFlightRef = useRef(false);
+  const readInFlightRef = useRef(false);
+  const deployInFlightRef = useRef(false);
+  const [issuePending, setIssuePending] = useState(false);
+  const [readPending, setReadPending] = useState(false);
+  const [deployPending, setDeployPending] = useState(false);
+
   useEffect(() => {
     if (!api) return;
     const sub = api.state$.subscribe({
@@ -102,13 +118,13 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   // `api`/`state$` subscription must be re-established so the public on-chain
   // credential count renders without requiring a manual button click first.
   //
-  // Before trusting the saved address, the on-chain organizer commitment of the
-  // persisted event is verified against the connected wallet's derived
-  // identity. A stale address (e.g. a leftover from a previous deployment whose
-  // organizer key belongs to no 1AM wallet, or to a different one) is NOT
-  // reused — the connected wallet would fail the on-chain organizer assert on
-  // every Issue. Instead a fresh event owned by the connected wallet is
-  // auto-deployed and the saved address is replaced.
+  // IMPORTANT (duplicate-request fix): this mount-time effect must NOT derive
+  // the wallet organizer key. Derivation calls 1AM `signData`, which pops the
+  // "Sign text-encoded data" approval — firing that automatically here (and
+  // again on an Issue click) produced the "Duplicate request" 1AM error.
+  // Ownership verification is therefore deferred to Issue time, where a single
+  // in-flight derivation is shared and the cached session key is reused, so one
+  // user click triggers exactly one wallet request.
   useEffect(() => {
     if (!connected || api) return;
     const bundle = getBundle();
@@ -119,33 +135,17 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       try {
         const joined = await CounterAPI.join(bundle.providers, contractAddress);
         if (cancelled) return;
-        // Only the organizer wallet carries the derived identity to verify
-        // ownership against; a read-only wallet joins as-is (it can View but
-        // its Issue attempts will be rejected on-chain, as intended).
-        if (bundle.providers.organizerIdentity) {
-          const onChainState = await joined.readLatest();
-          if (cancelled) return;
-          const expectedOrganizer = await CounterAPI.currentOrganizerCommitment(bundle.providers);
-          if (cancelled) return;
-          if (onChainState.organizer !== expectedOrganizer) {
-            console.warn(
-              '[debug] persisted event is NOT owned by the connected wallet; its on-chain organizer',
-              onChainState.organizer,
-              '!= wallet-derived',
-              expectedOrganizer,
-              '— deploying a fresh event owned by the connected wallet',
+        void joined.readLatest().then((s) => {
+          if (!cancelled) {
+            setLedger(s);
+            console.log(
+              '[debug] auto-joined persisted event contract address:',
+              String(joined.contractAddress),
+              'on-chain organizer:',
+              s.organizer,
             );
-            setMessage(
-              `The previously deployed event ${contractAddress.slice(0, 12)}… is not owned by the connected wallet ` +
-                `(its on-chain organizer belongs to a different key/session), so it can never pass the organizer check. ` +
-                `Deploying a fresh event registered to this wallet now…`,
-            );
-            await deployNewEvent();
-            return;
           }
-          console.log('[debug] persisted event verified as owned by the connected wallet (organizer matches)');
-        }
-        console.log('[debug] auto-joined persisted event contract address:', String(joined.contractAddress));
+        });
         setApi(joined);
         setActiveAddress(String(joined.contractAddress));
         setPhase('idle');
@@ -193,6 +193,11 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   };
 
   const runCircuit = async (name: 'increment' | 'read') => {
+    const inFlightRef = name === 'increment' ? issueInFlightRef : readInFlightRef;
+    if (inFlightRef.current) return; // same action already in flight — ignore the duplicate click
+    inFlightRef.current = true;
+    if (name === 'increment') setIssuePending(true);
+    else setReadPending(true);
     try {
       const bundle = getBundle();
       const counterApi = await join();
@@ -238,20 +243,27 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       setLedger(await counterApi.readLatest());
       setPhase('done');
       setMessage(`Transaction finalized on ${NETWORK_ID}. Counter refreshes from the chain below.`);
-    } catch (err) {
-      setPhase('error');
-      const raw = err instanceof Error ? err.message : String(err);
-      setMessage(
-        /organizer authorization failed/i.test(raw)
-          ? raw
-          : /assert/i.test(raw)
-            ? `Access issuance was rejected on-chain on event ${activeAddress ?? '(configured event)'}: the connected 1AM wallet is not the registered organizer of this event, and only the organizer can issue access. Register this wallet as the organizer by clicking "Deploy new event (organizer)", then Issue again. No key is ever entered or stored. ({${raw}})`
-            : `error: ${raw}`,
-      );
-    }
+} catch (err) {
+        setPhase('error');
+        const raw = err instanceof Error ? err.message : String(err);
+        setMessage(
+          /organizer authorization failed/i.test(raw)
+            ? raw
+            : /assert/i.test(raw)
+              ? `Access issuance was rejected on-chain on event ${activeAddress ?? '(configured event)'}: the connected 1AM wallet is not the registered organizer of this event, and only the organizer can issue access. Register this wallet as the organizer by clicking "Deploy new event (organizer)", then Issue again. No key is ever entered or stored. ({${raw}})`
+              : `error: ${raw}`,
+        );
+      } finally {
+        inFlightRef.current = false;
+        if (name === 'increment') setIssuePending(false);
+        else setReadPending(false);
+      }
   };
 
   const deployNewEvent = async () => {
+    if (deployInFlightRef.current) return; // duplicate deploy click — no-op
+    deployInFlightRef.current = true;
+    setDeployPending(true);
     try {
       const bundle = getBundle();
       if (!bundle) throw new Error('Wallet is not connected.');
@@ -300,10 +312,17 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
             ? `Deployment failed: ${raw}. The 1AM wallet needs preprod funds (T$ and DUST) to finalize the deploy transaction. Fund it via the Midnight faucet, then press "Deploy new event (organizer)".`
             : `Deployment failed: ${raw}`,
       );
+    } finally {
+      deployInFlightRef.current = false;
+      setDeployPending(false);
     }
   };
 
-  const busy = phase === 'proving' || phase === 'joining';
+  // Per-action pending flags power the button disabled state. Issue and Deploy are
+  // mutually exclusive (both submit wallet-backed transactions), while Verify
+  // access is a pure read that stays clickable no matter what Issue/Deploy are
+  // doing — it is only disabled while its own read request is in flight.
+  const busy = issuePending || deployPending;
 
   // ── Automatic first-run deployment ───────────────────────────────────────────
   // Root-cause fix for "No event contract address configured": the app only ever
@@ -349,14 +368,14 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           onClick={() => runCircuit('increment')}
           title="Organizer-only circuit"
         >
-          Issue credential (+1)
+          {issuePending ? 'Issuing…' : 'Issue credential (+1)'}
         </button>
         <button
-          style={{ ...styles.button, ...styles.buttonSecondary, ...(busy ? styles.buttonDisabled : {}) }}
-          disabled={!connected || busy}
+          style={{ ...styles.button, ...styles.buttonSecondary, ...(readPending ? styles.buttonDisabled : {}) }}
+          disabled={!connected || readPending}
           onClick={() => runCircuit('read')}
         >
-          Verify access (read)
+          {readPending ? 'Verifying…' : 'Verify access (read)'}
         </button>
         <button
           style={{ ...styles.button, ...styles.buttonTertiary, ...(busy ? styles.buttonDisabled : {}) }}
@@ -364,7 +383,7 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           onClick={() => deployNewEvent()}
           title="Organizer-only: deploy a new event whose organizer identity is created and held by this connected 1AM wallet session"
         >
-          Deploy new event (organizer)
+          {deployPending ? 'Deploying…' : 'Deploy new event (organizer)'}
         </button>
       </div>
 

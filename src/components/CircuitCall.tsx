@@ -101,6 +101,14 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   // wallet connects): the address survives in localStorage, but the read-only
   // `api`/`state$` subscription must be re-established so the public on-chain
   // credential count renders without requiring a manual button click first.
+  //
+  // Before trusting the saved address, the on-chain organizer commitment of the
+  // persisted event is verified against the connected wallet's derived
+  // identity. A stale address (e.g. a leftover from a previous deployment whose
+  // organizer key belongs to no 1AM wallet, or to a different one) is NOT
+  // reused — the connected wallet would fail the on-chain organizer assert on
+  // every Issue. Instead a fresh event owned by the connected wallet is
+  // auto-deployed and the saved address is replaced.
   useEffect(() => {
     if (!connected || api) return;
     const bundle = getBundle();
@@ -111,6 +119,32 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       try {
         const joined = await CounterAPI.join(bundle.providers, contractAddress);
         if (cancelled) return;
+        // Only the organizer wallet carries the derived identity to verify
+        // ownership against; a read-only wallet joins as-is (it can View but
+        // its Issue attempts will be rejected on-chain, as intended).
+        if (bundle.providers.organizerIdentity) {
+          const onChainState = await joined.readLatest();
+          if (cancelled) return;
+          const expectedOrganizer = await CounterAPI.currentOrganizerCommitment(bundle.providers);
+          if (cancelled) return;
+          if (onChainState.organizer !== expectedOrganizer) {
+            console.warn(
+              '[debug] persisted event is NOT owned by the connected wallet; its on-chain organizer',
+              onChainState.organizer,
+              '!= wallet-derived',
+              expectedOrganizer,
+              '— deploying a fresh event owned by the connected wallet',
+            );
+            setMessage(
+              `The previously deployed event ${contractAddress.slice(0, 12)}… is not owned by the connected wallet ` +
+                `(its on-chain organizer belongs to a different key/session), so it can never pass the organizer check. ` +
+                `Deploying a fresh event registered to this wallet now…`,
+            );
+            await deployNewEvent();
+            return;
+          }
+          console.log('[debug] persisted event verified as owned by the connected wallet (organizer matches)');
+        }
         console.log('[debug] auto-joined persisted event contract address:', String(joined.contractAddress));
         setApi(joined);
         setActiveAddress(String(joined.contractAddress));
@@ -160,10 +194,43 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
 
   const runCircuit = async (name: 'increment' | 'read') => {
     try {
+      const bundle = getBundle();
       const counterApi = await join();
       setPhase('proving');
       setMessage(`Generating ZK proof locally (${name}) — this runs in your browser…`);
       if (name === 'increment') {
+        // Pre-flight on-chain organizer check (requirement: never submit a
+        // transaction that is guaranteed to revert). Read the event's registered
+        // organizer commitment and compare it (case-insensitively) against the
+        // connected wallet's derived identity. This mirrors the contract's own
+        // `only the organizer can issue access` assert, but fails fast with a
+        // clear message instead of spending a submit+fail cycle.
+        if (bundle?.providers.organizerIdentity) {
+          const [expectedOrganizer, onChainState] = await Promise.all([
+            CounterAPI.currentOrganizerCommitment(bundle.providers).catch(() => undefined),
+            counterApi.readLatest().catch(() => undefined),
+          ]);
+          const connected = expectedOrganizer?.toLowerCase();
+          const registered = onChainState?.organizer.toLowerCase();
+          console.log('[debug] pre-issue organizer check:');
+          console.log('[debug]   connected wallet organizer commitment:', connected);
+          console.log('[debug]   deployed event organizer commitment:', registered);
+          console.log(
+            '[debug]   organizer match:',
+            connected && registered ? connected === registered : 'unreadable (skipping fail-fast, on-chain assert still enforces)',
+          );
+          if (connected && registered && connected !== registered) {
+            setPhase('error');
+            setMessage(
+              `Access issuance was rejected BEFORE submission: the connected 1AM wallet is not the registered ` +
+                `organizer of event ${onChainState ? String(counterApi.contractAddress).slice(0, 12) : '(configured)'}… ` +
+                `(on-chain organizer ${registered} ≠ connected wallet ${connected}). Only the organizer may issue ` +
+                `access. Click "Deploy new event (organizer)" to register a fresh event owned by this wallet — no ` +
+                `key is ever entered or stored.`,
+            );
+            return;
+          }
+        }
         await counterApi.increment();
       } else {
         await counterApi.read();

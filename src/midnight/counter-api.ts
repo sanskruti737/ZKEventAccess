@@ -196,6 +196,17 @@ export class CounterAPI {
   }
 
   /**
+   * Returns the organizer commitment the connected wallet would register if it
+   * deployed an event, derived deterministically from the wallet's own
+   * key material. Used to verify that a persisted/saved event is actually owned
+   * by the currently connected 1AM wallet before reusing it.
+   */
+  static async currentOrganizerCommitment(providers: CounterProviders): Promise<string> {
+    const sk = await resolveOrDeriveOrganizerSecretKey(providers);
+    return organizerCommitment(sk);
+  }
+
+  /**
    * One-shot read of the current on-chain ledger state for this event. Used to
    * refresh the public credential count immediately after a finalized issuance,
    * independent of the state$ poll cadence.

@@ -5,7 +5,7 @@
 Collected via:
 - Direct DMs (X / Discord / Telegram)
 - Event community channels
-- Google Form: _paste link here when live_
+- Google Form: https://forms.gle/4pAgjYzUvV2uN5FR8
 
 ### Feedback Form (Google Forms)
 

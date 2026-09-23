@@ -5,7 +5,16 @@
 Collected via:
 - Direct DMs (X / Discord / Telegram)
 - Event community channels
-- [Form to be added once live]
+- Google Form: _paste link here when live_
+
+### Feedback Form (Google Forms)
+
+Ask each tester:
+1. Did the wallet connect and the counter load correctly? (Yes / No / Partial)
+2. Where did you get stuck, if anywhere?
+3. Is the "Issue credential (+1)" / "Verify access (read)" flow clear?
+4. What is one feature you wish existed?
+5. Anything that felt broken, slow, or confusing?
 
 ## Raw Feedback Log
 
@@ -17,7 +26,7 @@ Collected via:
 
 ## What We Heard (Themes)
 
-[I WILL FILL THIS IN after collecting feedback]
+- _e.g. "Users struggled with faucet funding before they could test."_
 
 ## What We Changed
 

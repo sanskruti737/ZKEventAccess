@@ -161,6 +161,10 @@ Contract address: `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6f
 
 ![Deploy output](docs/screenshot-deploy.svg)
 
+### Live dApp walkthrough
+
+[View browser flow screenshot](https://drive.google.com/file/d/17x1JBv00z54lU5T0Bf8wp7Ezfs1yJJUk/view?usp=sharing)
+
 ## Demo Video
 
 [Demo video](https://drive.google.com/file/d/1yzNQkpBN6raXf2FTGURV_yN00b_gcxDM/view?usp=drive_link)

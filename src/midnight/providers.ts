@@ -16,7 +16,7 @@ import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import type { CounterCircuitKeys, CounterProviders } from './counter-api';
 import { COUNTER_PRIVATE_STATE_ID } from './counter-api';
 import type { CounterPrivateState } from '../witnesses.js';
-import { inMemoryPrivateStateProvider } from './in-memory-private-state-provider';
+import { indexedDbPrivateStateProvider } from './indexed-db-private-state-provider';
 import type { Logger } from './logger';
 
 export const NETWORK_ID = (import.meta.env.VITE_NETWORK_ID as string) ?? 'preprod';
@@ -123,12 +123,15 @@ export const startWalletDetection = (): (() => void) => {
 };
 
 /**
- * Fixed domain message used to derive the wallet-owned organizer secret key.
- * The connected 1AM wallet signs this exact message; its (deterministic)
- * signature is hashed to a 32-byte organizer witness key. Same wallet, same
- * message => same key on every session, so the organizer secret never needs to
- * be stored, pasted, or generated at random — it lives in the wallet's own key
- * material and only appears transiently in the browser while a proof is made.
+ * Fixed domain message the connected 1AM wallet signs to derive the
+ * wallet-owned organizer secret key. The signature is hashed (SHA-256) to a
+ * 32-byte organizer witness key. `signData` is non-deterministic, so the key is
+ * NOT reproduced by deriving it again later — it is derived once and persisted
+ * in the wallet-scoped private state provider (IndexedDB); on every later
+ * session that same wallet recovers the key from there. It never needs to be
+ * stored in localStorage, pasted, or generated at random; it lives in the
+ * wallet's own key material and only appears transiently in the browser while a
+ * proof is made.
  */
 const ORGANIZER_AUTH_MESSAGE = 'zkEventAccess:organizer:authorization';
 
@@ -200,7 +203,6 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
 
   const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
-  const privateStateProvider = inMemoryPrivateStateProvider<typeof COUNTER_PRIVATE_STATE_ID, CounterPrivateState>();
   const keyMaterialProvider = zkConfigProvider;
 
   let proofProvider: ProofProvider;
@@ -235,6 +237,17 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   } catch {
     throw new Error('Connected, but the wallet did not return your address. Try reconnecting.');
   }
+
+  // Persistent, wallet-scoped private state (IndexedDB). This is where the
+  // organizer secret key witness is stored for the lifetime of the browser's
+  // profile: the wallet's signData is non-deterministic, so the key cannot be
+  // re-derived after a refresh — it must be recovered from here. Scoped by the
+  // wallet's shielded address so a different wallet on this browser can never
+  // read it. Never written to localStorage/sessionStorage.
+  const privateStateProvider = indexedDbPrivateStateProvider<
+    typeof COUNTER_PRIVATE_STATE_ID,
+    CounterPrivateState
+  >(address);
 
   const providers: CounterProviders = {
     privateStateProvider,

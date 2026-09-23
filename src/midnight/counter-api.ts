@@ -22,12 +22,13 @@ export type CounterContract = Counter.Contract<CounterPrivateState, Counter.Witn
 /**
  * Wallet-owned organizer identity capability.
  *
- * `deriveOrganizerSecretKey` deterministically derives the organizer secret key
- * bound to the connected 1AM wallet (via its `signData` capability over a fixed
- * domain message). The same wallet reproduces the same key on every session, so
- * the organizer secret never needs to be stored, pasted, or generated at random:
- * it lives inside the wallet's own key material and is only materialized in the
- * browser for the brief moment a proof is produced.
+ * The organizer secret key is derived from the connected 1AM wallet via its
+ * `signData` capability over a fixed domain message, then persisted in the
+ * wallet-scoped private state provider (IndexedDB) so it survives a page
+ * refresh. The key is never stored in localStorage/sessionStorage, never
+ * pasted or generated at random, never appears in the UI, logs, or network
+ * requests: it is materialized from the wallet exactly once and recovered from
+ * the private state provider on every later session of that same wallet.
  */
 export interface OrganizerIdentity {
   readonly deriveOrganizerSecretKey: () => Promise<Uint8Array>;
@@ -82,22 +83,32 @@ const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string):
 };
 
 /**
- * Hex digests of organizer keys this session materialized as organizer identity
- * (via wallet derivation or `deployNew`). Tracked in-memory so join/increment
- * reuse exactly the key the connected 1AM wallet owns for the event, and so a
- * reader placeholder can never be mistaken for a real organizer key.
+ * Hex digests of organizer keys this wallet has genuinely provisioned. With a
+ * persistent (IndexedDB) private-state provider, the gate for "is this a real
+ * organizer key?" is simply: a 32-byte non-zero value at `COUNTER_PRIVATE_STATE_ID`.
+ * The read-only join placeholder (`new Uint8Array(32)`, all zeros) can therefore
+ * never be mistaken for organizer authority.
  */
-const organizerSessionKeys = new Set<string>();
+const isZeroKey = (key: Uint8Array): boolean => {
+  for (const b of key) {
+    if (b !== 0) return false;
+  }
+  return true;
+};
 
 /**
- * Resolves the organizer secret key (proof witness) from the wallet-bound
- * private state provider, under `COUNTER_PRIVATE_STATE_ID`. It is never read
- * from or written to localStorage, and never reaches the UI, `window`, or the
- * network.
+ * Resolves the organizer secret key (proof witness) from the wallet-bound,
+ * persistent private state provider, under `COUNTER_PRIVATE_STATE_ID`. It is
+ * never read from or written to localStorage or sessionStorage, and never
+ * reaches the UI, `window`, or the network.
  *
- * Only keys this session genuinely materialized as organizer identity are
- * returned. Otherwise it returns `null` so callers can decide to derive the
- * wallet-owned key rather than fabricating one.
+ * Because the wallet's `signData` is non-deterministic, the organizer key
+ * cannot be reproduced by re-deriving it after a refresh — it survives only
+ * because the private-state provider persists it (IndexedDB), scoped to this
+ * wallet. Any 32-byte non-zero key stored there was written by this wallet's
+ * own derivation/deployment path in a prior session and is accepted as its
+ * organizer identity. Otherwise `null` is returned so callers can decide to
+ * derive the wallet-owned key rather than fabricating one.
  */
 const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<Uint8Array | null> => {
   try {
@@ -105,11 +116,11 @@ const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<U
       | CounterPrivateState
       | null;
     const key = state?.organizerSecretKey;
-    if (key && key.length === 32 && organizerSessionKeys.has(toHex(key))) {
+    if (key && key.length === 32 && !isZeroKey(key)) {
       return key;
     }
   } catch {
-    // fall through: no organizer identity in this wallet session
+    // fall through: no organizer identity is available for this wallet
   }
   return null;
 };
@@ -154,10 +165,10 @@ const deriveWalletOrganizerKey = (providers: CounterProviders): Promise<Uint8Arr
 
 /**
  * Resolves the organizer secret key from the wallet-bound private state provider
- * if this session provisioned one, otherwise derives it deterministically from
- * the connected 1AM wallet. The key is stored only in the private state provider
- * (never localStorage, never the UI, never logged) and is used as the proof
- * witness. There is no random-key fallback.
+ * if this wallet provisioned one (persisted across sessions), otherwise derives
+ * it from the connected 1AM wallet. The key is stored only in the private state
+ * provider (IndexedDB — never localStorage/sessionStorage, never the UI, never
+ * logged) and is used as the proof witness. There is no random-key fallback.
  *
  * The derivation itself is single-flight (see {@link deriveWalletOrganizerKey}):
  * concurrent callers share one wallet signData request, so a single user action
@@ -167,7 +178,6 @@ const resolveOrDeriveOrganizerSecretKey = async (providers: CounterProviders): P
   const existing = await resolveOrganizerSecretKey(providers);
   if (existing) return existing;
   const derived = await deriveWalletOrganizerKey(providers);
-  organizerSessionKeys.add(toHex(derived));
   await providers.privateStateProvider.set(COUNTER_PRIVATE_STATE_ID, { organizerSecretKey: derived });
   return derived;
 };
@@ -205,8 +215,8 @@ export class CounterAPI {
   /**
    * Issues one access credential (organizer-only circuit).
    *
-   * The organizer witness key is resolved from the connected 1AM wallet (session
-   * private state, or wallet-derived authorization on first use) and used to
+   * The organizer witness key is resolved from the wallet-bound private state
+   * provider (persisted organizer key, recovered across sessions) and used to
    * build a local proof. The on-chain organizer assert remains the final gate —
    * if the connected wallet is not the registered organizer, the chain rejects
    * the call and the error is surfaced truthfully.
@@ -230,9 +240,10 @@ export class CounterAPI {
 
   /**
    * Returns the organizer commitment the connected wallet would register if it
-   * deployed an event, derived deterministically from the wallet's own
-   * key material. Used to verify that a persisted/saved event is actually owned
-   * by the currently connected 1AM wallet before reusing it.
+   * deployed an event, resolved from the wallet-bound private state provider
+   * (persisted organizer key recovered across sessions). Used to verify that a
+   * persisted/saved event is actually owned by the currently connected 1AM
+   * wallet before reusing it.
    */
   static async currentOrganizerCommitment(providers: CounterProviders): Promise<string> {
     const sk = await resolveOrDeriveOrganizerSecretKey(providers);
@@ -258,9 +269,12 @@ export class CounterAPI {
   }
 
   /**
-   * Joins the preprod contract. Non-organizer wallets join with a read-only
-   * placeholder private state (never used as organizer authority); organizer
-   * wallets reuse the exact key they provisioned at deployment.
+   * Joins the preprod contract. The private state provider holds this wallet's
+   * organizer secret key (persisted across sessions, scoped to this wallet). A
+   * non-organizer wallet joins with a read-only placeholder private state
+   * (never used as organizer authority). `initialPrivateState` only becomes the
+   * placeholder when no genuine organizer key is persisted, so a persisted
+   * organizer key is never clobbered by `findDeployedContract`.
    */
   static async join(providers: CounterProviders, contractAddress: ContractAddress, logger?: Logger): Promise<CounterAPI> {
     logger?.info({ joinContract: { contractAddress } }, 'joining deployed counter');
@@ -282,10 +296,11 @@ export class CounterAPI {
 
   /**
    * Deploys a NEW event instance whose organizer identity is owned by the
-   * connected 1AM wallet. The organizer key is derived deterministically from
-   * the wallet (never generated at random, never persisted), and the on-chain
-   * `organizer` commitment is bound to it — so every future session of that
-   * same wallet can re-derive the key and issue credentials without any secret
+   * connected 1AM wallet. The organizer key is derived from the wallet (never
+   * generated at random), persisted in the wallet-scoped private state provider
+   * so it survives refreshes, and the on-chain `organizer` commitment is bound
+   * to it — so every future session of that same wallet recovers the key from
+   * the private state provider and can issue credentials without any secret
    * leaving the wallet's key material.
    *
    * After deployment this reads the NEW contract's on-chain state from the

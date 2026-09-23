@@ -169,19 +169,24 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   }, [connected, api, getBundle]);
 
   const join = async (): Promise<CounterAPI> => {
-    if (api) return api;
-    setPhase('joining');
-    setMessage('Joining the preprod contract…');
-    const bundle = getBundle();
-    if (!bundle) throw new Error('Wallet is not connected.');
-    // The current active event is whatever was deployed/joined in this session;
-    // fall back to a previously deployed address persisted from this browser.
+    // Always bind to the CURRENT active event (the most recent deploy wins).
+    // Returning the cached `api` unconditionally is what caused the "still
+    // rejected as organizer" reports after a new deploy: the address had been
+    // switched to the fresh event but the stale CounterAPI bound to the old
+    // event was still returned, so the organizer comparison ran against the
+    // WRONG contract. Re-join whenever the API's contract differs from the
+    // active address (or when no API is materialized yet).
     const contractAddress = activeAddress ?? resolveContractAddress();
     if (!contractAddress) {
       throw new Error(
         'No event contract address configured. Click "Deploy new event (organizer)" so this wallet becomes the on-chain organizer.',
       );
     }
+    if (api && String(api.contractAddress) === contractAddress) return api;
+    setPhase('joining');
+    setMessage('Joining the preprod contract…');
+    const bundle = getBundle();
+    if (!bundle) throw new Error('Wallet is not connected.');
     const joined = await CounterAPI.join(bundle.providers, contractAddress);
     console.log('[debug] joined event contract address:', String(joined.contractAddress));
     console.log('[debug] connected wallet:', bundle.walletName, 'shieldedAddress:', bundle.address);
@@ -264,6 +269,7 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     if (deployInFlightRef.current) return; // duplicate deploy click — no-op
     deployInFlightRef.current = true;
     setDeployPending(true);
+    let switchedAddress: string | undefined;
     try {
       const bundle = getBundle();
       if (!bundle) throw new Error('Wallet is not connected.');
@@ -276,6 +282,7 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         // The deployment transaction has already been finalized on-chain — this
         // is the REAL new address. Persist it the moment we know it, so a lagging
         // indexer read can never cause the freshly deployed event to be lost.
+        switchedAddress = address;
         try {
           window.localStorage.setItem(DEPLOYED_CONTRACT_ADDRESS_KEY, address);
         } catch {
@@ -305,6 +312,24 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         /insufficient|not enough|funds|balance|dust/i.test(raw) &&
         /rejected|denied|cancel/i.test(raw) === false;
       const rejected = /rejected|denied|user declined|abort|cancel/i.test(raw);
+      if (switchedAddress) {
+        // The deploy DID finalize on-chain and the address was persisted+activated,
+        // but the post-finalization organizer-verification read failed/timed out.
+        // Bind the live `api` to the NEW event right now so a following Issue click
+        // runs against the fresh event (not the stale one the pre-flight previously
+        // compared against) while still surfacing the verification error message.
+        try {
+          setActiveAddress(switchedAddress);
+          const rebindBundle = getBundle();
+          if (rebindBundle) {
+            const joined = await CounterAPI.join(rebindBundle.providers, switchedAddress);
+            console.log('[debug] rebound api to newly deployed event:', switchedAddress);
+            setApi(joined);
+          }
+        } catch (rebindErr) {
+          console.warn('[debug] rebind to newly deployed event failed:', String(rebindErr));
+        }
+      }
       setMessage(
         rejected
           ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy new event (organizer)" to try again when ready.`

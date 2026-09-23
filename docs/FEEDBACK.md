@@ -89,7 +89,11 @@ _54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails i
 
 | Change | Reason | Commit |
 |--------|--------|--------|
-| _Planned: clearer error + guided steps when "Issue credential" fails (e.g. key missing / proof server down)_ | Theme #3 — 4/53 users (7%) couldn't issue | _pending_ |
-| _Planned: show the correct address format (`mn_addr_preprod1…`) in onboarding_ | Theme #4 — address entry errors | _pending_ |
+| Auto-deploy a new event on first wallet connect, so "Issue credential" works immediately for fresh testers | Theme #3 — new users had no event address configured and were stuck | `4053658` |
+| Single-flight organizer derivation + per-action locks; one click = one wallet request | Theme #3 — Issue aborted with 1AM "Duplicate request" | `8079341` |
+| Real event deployment, active-contract persistence and re-binding to the freshly deployed event | Theme #3 — Issue ran against a stale event and was rejected as non-organizer | `4e955ea`, `cbb57f5`, `6b86d39` |
+| Pre-flight on-chain organizer check — fail fast with "not the registered organizer" instead of submit-and-fail | Theme #3 — rejections were opaque | `e42a37a` |
+| Actionable deploy error messages (faucet funding, approval guidance) | Theme #3 — fund/DUST errors were cryptic | `4053658` |
 
-[I WILL FILL THIS IN after iterating — link each change to its commit]
+Notes:
+- The 4 "cannot issue" responses (15–21 Sep) predate the fixes above — subsequent testers (22–23 Sep) all issued successfully. Remaining gap to watch: onboarding guidance showing the correct `mn_addr_preprod1…` address format (Theme #4).

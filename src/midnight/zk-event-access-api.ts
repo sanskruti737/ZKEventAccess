@@ -8,7 +8,7 @@ import {
   type FoundContract,
 } from '@midnight-ntwrk/midnight-js-contracts';
 import { combineLatest, firstValueFrom, from, map, type Observable } from 'rxjs';
-import { toHex } from '@midnight-ntwrk/midnight-js-utils';
+import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import type { MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
 import { witnesses, type ZKEventAccessPrivateState } from '../witnesses.js';
 import type { Logger } from './logger';
@@ -64,8 +64,32 @@ const ORGANIZER_DOMAIN = new Uint8Array([
   0, 0, 0, 0, 0, 0, 0,
 ]);
 
-export const organizerCommitment = (secretKey: Uint8Array): string =>
-  toHex(new Uint8Array(persistentHash(new CompactTypeVector(2, new CompactTypeBytes(32)), [ORGANIZER_DOMAIN, secretKey])));
+/**
+ * Off-chain mirror of the contract's `publicKey` circuit.
+ *
+ * MUST stay byte-for-byte equivalent to `contracts/zk-event-access.compact`:
+ *
+ *   circuit publicKey(sk: Bytes<32>): Bytes<32> {
+ *     return persistentHash<Vector<3, Bytes<32>>>(
+ *       [pad(32, "zkEventAccess:organizer"), contractAddress, sk]);
+ *   }
+ *
+ * The commitment is bound to BOTH the domain separator AND the deploying
+ * contract's own address. Omitting `contractAddress` (or hashing it as a
+ * `Vector<2>`) produces a value that can never equal the ledger's `organizer`,
+ * which made the pre-flight organizer check report a false mismatch for every
+ * event and made post-deploy verification fail unconditionally.
+ */
+export const organizerCommitment = (secretKey: Uint8Array, contractAddress: string): string =>
+  toHex(
+    new Uint8Array(
+      persistentHash(new CompactTypeVector(3, new CompactTypeBytes(32)), [
+        ORGANIZER_DOMAIN,
+        fromHex(contractAddress),
+        secretKey,
+      ]),
+    ),
+  );
 
 const DEPLOY_TIMEOUT_MS = 5 * 60_000;
 const DEPLOY_STATE_READ_TIMEOUT_MS = 60_000;
@@ -223,7 +247,10 @@ export class ZKEventAccessAPI {
    */
   async increment(): Promise<void> {
     const sk = await resolveOrDeriveOrganizerSecretKey(this.providers);
-    console.log('[debug] wallet-derived organizer commitment:', organizerCommitment(sk));
+    console.log(
+      '[debug] wallet-derived organizer commitment for this event:',
+      organizerCommitment(sk, String(this.contractAddress)),
+    );
     this.logger?.info('increment: proving locally...');
     const txData = await this.deployed.callTx.increment();
     this.logger?.info({ txHash: txData.public.txHash }, 'increment finalized');
@@ -245,9 +272,9 @@ export class ZKEventAccessAPI {
    * persisted/saved event is actually owned by the currently connected 1AM
    * wallet before reusing it.
    */
-  static async currentOrganizerCommitment(providers: ZKEventAccessProviders): Promise<string> {
+  static async currentOrganizerCommitment(providers: ZKEventAccessProviders, contractAddress: string): Promise<string> {
     const sk = await resolveOrDeriveOrganizerSecretKey(providers);
-    return organizerCommitment(sk);
+    return organizerCommitment(sk, contractAddress);
   }
 
   /**
@@ -315,8 +342,6 @@ export class ZKEventAccessAPI {
   ): Promise<ZKEventAccessAPI> {
     logger?.info('deploying new ZK Event Access contract instance');
     const organizerSecretKey = await resolveOrDeriveOrganizerSecretKey(providers);
-    const expectedOrganizer = organizerCommitment(organizerSecretKey);
-    console.log('[debug] wallet-derived organizer commitment to register:', expectedOrganizer);
 
     const deployed = await withTimeout(
       deployContract(providers, {
@@ -330,7 +355,14 @@ export class ZKEventAccessAPI {
         `and that the wallet has preprod coins for the deployment fee, then retry.`,
     );
     const deployedAddress = String(deployed.deployTxData.public.contractAddress);
+    // The constructor binds `organizer` to persistentHash(domain || contractAddress || sk),
+    // and `contractAddress` is the address the contract was just deployed to. The
+    // expected commitment is therefore only computable now that the real address
+    // is known — computing it beforehand (or without the address) yields a value
+    // that can never match the ledger.
+    const expectedOrganizer = organizerCommitment(organizerSecretKey, deployedAddress);
     console.log('[debug] newly deployed contract address:', deployedAddress);
+    console.log('[debug] wallet-derived organizer commitment registered on-chain:', expectedOrganizer);
     // The deployment transaction is finalized on-chain at this point, so the
     // real address is a fact — publish it immediately so the caller can persist
     // it even if the verification read below times out on a lagging indexer.

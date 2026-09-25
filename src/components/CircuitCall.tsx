@@ -3,6 +3,18 @@ import { ZKEventAccessAPI, type ZKEventAccessLedgerState } from '../midnight/zk-
 import { NETWORK_ID } from '../midnight/providers';
 import type { ProvidersBundle } from '../midnight/providers';
 import {
+  clearStoredActiveEventAddress,
+  isOrganizerMismatch,
+  isStaleContractBuildError,
+  organizerMismatchMessage,
+  readStoredActiveEventOrganizer,
+  readStoredActiveEventAddress,
+  staleContractBuildCircuits,
+  staleContractBuildMessage,
+  writeStoredActiveEvent,
+  writeStoredActiveEventAddress,
+} from '../midnight/active-event';
+import {
   ActivityIcon,
   AlertIcon,
   CheckIcon,
@@ -20,28 +32,13 @@ import {
   WalletIcon,
 } from './Icon';
 
-/** Public (non-secret) contract address of an event deployed from this browser. */
-const DEPLOYED_CONTRACT_ADDRESS_KEY = 'zkEventAccess.deployedContractAddress';
-
-const isValidAddress = (value: unknown): value is string =>
-  typeof value === 'string' && /^(0x)?[0-9a-fA-F]{24,128}$/.test(value.trim());
-
 /**
- * Returns the active event address from localStorage (set by a prior successful
- * deploy from this browser).  There is NO `.env` / VITE fallback — the old
- * CLI-owned event was never registered to any 1AM wallet and can never pass the
- * organizer assert, so using it as a default would always produce a hard failure.
- * The user must deploy a new event before Issue / Verify can work.
+ * Returns the active event address remembered by this browser (set by a prior
+ * successful deploy).  There is NO `.env` / VITE fallback — the old CLI-owned
+ * event was never registered to any 1AM wallet and can never pass the organizer
+ * assert, so using it as a default would always produce a hard failure.
  */
-const resolveContractAddress = (): string | undefined => {
-  try {
-    const stored = window.localStorage.getItem(DEPLOYED_CONTRACT_ADDRESS_KEY);
-    if (stored && isValidAddress(stored)) return stored.trim();
-  } catch {
-    // storage unavailable — no deployed event yet
-  }
-  return undefined;
-};
+const resolveContractAddress = (): string | undefined => readStoredActiveEventAddress();
 
 const shortenAddress = (value: string): string => {
   if (value.length <= 26) return value;
@@ -81,6 +78,9 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const issueInFlightRef = useRef(false);
   const readInFlightRef = useRef(false);
   const deployInFlightRef = useRef(false);
+  // Guards the one automatic redeploy per session, so a failing redeploy can
+  // never loop. Reset whenever a genuinely new deployment succeeds.
+  const autoRedeployRef = useRef(false);
   const [issuePending, setIssuePending] = useState(false);
   const [readPending, setReadPending] = useState(false);
   const [deployPending, setDeployPending] = useState(false);
@@ -123,24 +123,45 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       try {
         const joined = await ZKEventAccessAPI.join(bundle.providers, contractAddress);
         if (cancelled) return;
-        void joined.readLatest().then((s) => {
-          if (!cancelled) {
-            setLedger(s);
-            setLastUpdated(new Date());
-            console.log(
-              '[debug] auto-joined persisted event contract address:',
-              String(joined.contractAddress),
-              'on-chain organizer:',
-              s.organizer,
-            );
-          }
-        });
+        const joinedAddress = String(joined.contractAddress);
+        const state = await joined.readLatest();
+        if (cancelled) return;
+        // Ownership is validated here using the PUBLIC organizer commitment that
+        // was recorded when this event was deployed. This costs no wallet
+        // prompt, and it stops the app from ever reading or issuing against an
+        // event this wallet does not own. Events saved before that commitment
+        // was recorded have none, so they are still checked at Issue time.
+        const recordedOrganizer = readStoredActiveEventOrganizer();
+        if (isOrganizerMismatch(recordedOrganizer, state.organizer)) {
+          recoverFromForeignOrganizer(joinedAddress, state.organizer, recordedOrganizer!);
+          return;
+        }
+        setLedger(state);
+        setLastUpdated(new Date());
+        console.log(
+          '[debug] auto-joined persisted event contract address:',
+          joinedAddress,
+          'on-chain organizer:',
+          state.organizer,
+        );
         setApi(joined);
-        setActiveAddress(String(joined.contractAddress));
+        setActiveAddress(joinedAddress);
         setPhase('idle');
         setMessage(undefined);
       } catch (err) {
         if (cancelled) return;
+        // A persisted event from a DIFFERENT contract build can never be called
+        // by this client — that is a permanent incompatibility, not a transient
+        // indexer hiccup, so it is handled by the redeploy path below.
+        if (isStaleContractBuildError(err)) {
+          console.warn(
+            '[stale-build] persisted event was deployed from a different contract build; unsetting it and redeploying',
+            contractAddress,
+            staleContractBuildCircuits(err),
+          );
+          recoverFromStaleEvent(err, contractAddress);
+          return;
+        }
         const raw = err instanceof Error ? err.message : String(err);
         setPhase('error');
         // The persisted event is not (yet) on chain in this session — e.g. it
@@ -187,6 +208,58 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     return joined;
   };
 
+  /**
+   * Root-cause recovery for an event deployed from a DIFFERENT contract build.
+   *
+   * Such an event is permanently uncallable by this client: the instance
+   * registered the verifier keys of the build that created it, and midnight-js
+   * contracts refuses the join ("... are undefined or have mismatched verifier
+   * keys ..."). Retrying, re-joining or re-proving can never fix it — only a new
+   * deployment from the CURRENT artifacts can. So the dead address is dropped
+   * (it is worthless to this build) and the app redeploys through the connected
+   * 1AM wallet, exactly as it does for a first-time visitor. The failure is
+   * reported truthfully in the UI, both before and after the redeploy attempt.
+   */
+  const recoverFromStaleEvent = (err: unknown, address: string): void => {
+    abandonActiveEvent(staleContractBuildMessage(address, staleContractBuildCircuits(err)));
+  };
+
+  /**
+   * The active event is unusable for this wallet, for one of two verified
+   * reasons. Either way the ONLY correct outcome is a new wallet-backed
+   * deployment: the stored address is dropped, the in-memory binding is
+   * released so no action can read the dead event, and a real redeploy is
+   * started through the connected 1AM wallet. The failure is always reported
+   * truthfully and never counted as a success.
+   */
+  const abandonActiveEvent = (explanation: string): void => {
+    clearStoredActiveEventAddress();
+    setActiveAddress(undefined);
+    setApi(undefined);
+    setLedger(undefined);
+    setPhase('error');
+    setMessage(explanation);
+    if (autoRedeployRef.current) return; // one automatic redeploy per session
+    autoRedeployRef.current = true;
+    void deployNewEvent(
+      'The previously active event could not be used by this wallet, so it was replaced.',
+    );
+  };
+
+  /**
+   * On-chain organizer of the active event belongs to a different wallet, so
+   * this wallet can never increment on it. Drop it and redeploy.
+   */
+  const recoverFromForeignOrganizer = (address: string, onChain: string, expected: string): void => {
+    console.warn(
+      '[organizer-mismatch] active event is owned by another organizer; unsetting it and redeploying',
+      address,
+      onChain,
+      expected,
+    );
+    abandonActiveEvent(organizerMismatchMessage(address, onChain, expected));
+  };
+
   const runCircuit = async (name: 'increment' | 'read') => {
     const inFlightRef = name === 'increment' ? issueInFlightRef : readInFlightRef;
     if (inFlightRef.current) return; // same action already in flight — ignore the duplicate click
@@ -206,8 +279,9 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         // `only the organizer can issue access` assert, but fails fast with a
         // clear message instead of spending a submit+fail cycle.
         if (bundle?.providers.organizerIdentity) {
+          const activeEventAddress = String(eventAccessApi.contractAddress);
           const [expectedOrganizer, onChainState] = await Promise.all([
-            ZKEventAccessAPI.currentOrganizerCommitment(bundle.providers).catch(() => undefined),
+            ZKEventAccessAPI.currentOrganizerCommitment(bundle.providers, activeEventAddress).catch(() => undefined),
             eventAccessApi.readLatest().catch(() => undefined),
           ]);
           const connected = expectedOrganizer?.toLowerCase();
@@ -219,15 +293,8 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
             '[debug]   organizer match:',
             connected && registered ? connected === registered : 'unreadable (skipping fail-fast, on-chain assert still enforces)',
           );
-          if (connected && registered && connected !== registered) {
-            setPhase('error');
-            setMessage(
-              `Access issuance was rejected BEFORE submission: the connected 1AM wallet is not the registered ` +
-                `organizer of event ${onChainState ? String(eventAccessApi.contractAddress).slice(0, 12) : '(configured)'}… ` +
-                `(on-chain organizer ${registered} ≠ connected wallet ${connected}). Only the organizer may issue ` +
-                `access. Click "Deploy a new wallet-backed event" to register a fresh event owned by this wallet — no ` +
-                `key is ever entered or stored.`,
-            );
+          if (isOrganizerMismatch(expectedOrganizer, onChainState?.organizer)) {
+            recoverFromForeignOrganizer(activeEventAddress, onChainState!.organizer, expectedOrganizer!);
             return;
           }
         }
@@ -244,6 +311,14 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           : `Verification complete on ${NETWORK_ID}. The latest public state is shown below.`,
       );
     } catch (err) {
+        // A stale-build event fails here too (join() throws ContractTypeError).
+        // That is not an authorization problem and not something a retry can fix:
+        // hand it to the redeploy path instead of reporting a misleading error.
+        if (isStaleContractBuildError(err)) {
+          console.warn('[stale-build] active event was deployed from a different contract build', err);
+          recoverFromStaleEvent(err, activeAddress ?? resolveContractAddress() ?? 'the saved event');
+          return;
+        }
         setPhase('error');
         const raw = err instanceof Error ? err.message : String(err);
         setMessage(
@@ -260,7 +335,13 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       }
   };
 
-  const deployNewEvent = async () => {
+  /**
+   * Deploys a new event instance from the CURRENT compiled artifacts through the
+   * connected 1AM wallet (the organizer's key is derived from the wallet and never
+   * entered or stored anywhere). `note` prepends the reason when this runs as an
+   * automatic recovery rather than a direct button press.
+   */
+  const deployNewEvent = async (note?: string) => {
     if (deployInFlightRef.current) return; // duplicate deploy click — no-op
     deployInFlightRef.current = true;
     setDeployPending(true);
@@ -270,7 +351,8 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       if (!bundle) throw new Error('Wallet is not connected.');
       setPhase('proving');
       setMessage(
-        'Submitting a new event deployment through the connected 1AM wallet, then waiting for on-chain inclusion and ' +
+        (note ? `${note} ` : '') +
+          'Submitting a new event deployment through the connected 1AM wallet, then waiting for on-chain inclusion and ' +
           'verifying this wallet is the registered organizer…',
       );
       const deployed = await ZKEventAccessAPI.deployNew(bundle.providers, undefined, (address) => {
@@ -278,25 +360,23 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         // is the REAL new address. Persist it the moment we know it, so a lagging
         // indexer read can never cause the freshly deployed event to be lost.
         switchedAddress = address;
-        try {
-          window.localStorage.setItem(DEPLOYED_CONTRACT_ADDRESS_KEY, address);
-        } catch {
-          // storage unavailable — in-session event still switches below
-        }
+        writeStoredActiveEventAddress(address);
         setActiveAddress(address);
       });
       console.log('[debug] deploy switched active event to:', String(deployed.contractAddress));
+      const newAddress = String(deployed.contractAddress);
       setApi(deployed);
-      setActiveAddress(String(deployed.contractAddress));
-      try {
-        window.localStorage.setItem(DEPLOYED_CONTRACT_ADDRESS_KEY, String(deployed.contractAddress));
-      } catch {
-        // storage unavailable — the in-session event is still switched; a later
-        // session simply falls back to the configured event until re-deployed.
-      }
+      setActiveAddress(newAddress);
+      // Record the verified on-chain organizer commitment alongside the address
+      // so later loads can validate ownership without another wallet prompt.
+      const verifiedOrganizer = await ZKEventAccessAPI.currentOrganizerCommitment(bundle.providers, newAddress)
+        .catch(() => undefined);
+      writeStoredActiveEvent(newAddress, verifiedOrganizer ?? '');
+      autoRedeployRef.current = false; // a fresh, working event: allow one future recovery
       setPhase('done');
       setMessage(
-        `New event deployed and VERIFIED on-chain as owned by this 1AM wallet (organizer commitment checked against the ` +
+        (note ? `${note} ` : '') +
+          `New event deployed and VERIFIED on-chain as owned by this 1AM wallet (organizer commitment checked against the ` +
           `indexer state before switching). Contract address: ${String(deployed.contractAddress)}. This event is now ` +
           `active and remembered, so "Issue credential" will pass the on-chain organizer check.`,
       );
@@ -326,11 +406,12 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         }
       }
       setMessage(
-        rejected
-          ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy a new wallet-backed event" to try again when ready.`
-          : low
-            ? `Deployment failed: ${raw}. The 1AM wallet needs preprod funds (T$ and DUST) to finalize the deploy transaction. Fund it via the Midnight faucet, then press "Deploy a new wallet-backed event".`
-            : `Deployment failed: ${raw}`,
+        (note ? `${note} ` : '') +
+          (rejected
+            ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy a new wallet-backed event" to try again when ready.`
+            : low
+              ? `Deployment failed: ${raw}. The 1AM wallet needs preprod funds (T$ and DUST) to finalize the deploy transaction. Fund it via the Midnight faucet, then press "Deploy a new wallet-backed event".`
+              : `Deployment failed: ${raw}`),
       );
     } finally {
       deployInFlightRef.current = false;

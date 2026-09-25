@@ -1,38 +1,42 @@
 import React from 'react';
 import type { MidnightWalletState } from '../hooks/useMidnight';
+import {
+  AlertIcon,
+  CheckIcon,
+  CopyIcon,
+  ExternalLinkIcon,
+  LoaderIcon,
+  LockIcon,
+  ShieldCheckIcon,
+  WalletIcon,
+} from './Icon';
 
-const styles: Record<string, React.CSSProperties> = {
-  card: {
-    border: '1px solid #30363d',
-    borderRadius: 12,
-    padding: '20px 24px',
-    background: '#161b22',
-    marginBottom: 20,
-  },
-  title: { margin: '0 0 12px', fontSize: 15, letterSpacing: 0.3, color: '#9fb3c8' },
-  button: {
-    padding: '10px 18px',
-    borderRadius: 8,
-    border: 'none',
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: 'pointer',
-    color: '#fff',
-    background: '#1f6feb',
-  },
-  buttonSecondary: { background: '#21262d', color: '#e6edf3' },
-  addressBox: {
-    fontFamily: 'monospace',
-    fontSize: 13,
-    background: '#0d1117',
-    border: '1px solid #30363d',
-    borderRadius: 8,
-    padding: '10px 12px',
-    wordBreak: 'break-all' as const,
-    margin: '10px 0',
-  },
-  error: { color: '#f85149', fontSize: 13, marginTop: 10 },
-  connected: { color: '#3fb950', fontWeight: 600, fontSize: 14 },
+const shortenAddress = (address: string): string => {
+  if (address.length <= 22) return address;
+  return `${address.slice(0, 12)}…${address.slice(-8)}`;
+};
+
+const useWalletDetection = (active: boolean): string[] | null => {
+  const [detected, setDetected] = React.useState<string[] | null>(null);
+
+  React.useEffect(() => {
+    if (!active) return undefined;
+    setDetected(null);
+    const timer = window.setInterval(() => {
+      const midnight = (window as unknown as { midnight?: Record<string, unknown> }).midnight;
+      const wallets = midnight
+        ? Object.values(midnight).filter(
+            (wallet): wallet is { name?: string; apiVersion?: string } =>
+              !!wallet && typeof wallet === 'object' && 'apiVersion' in wallet,
+          )
+        : [];
+      setDetected(wallets.map((wallet) => `${wallet.name ?? 'Unknown wallet'} · API ${wallet.apiVersion ?? 'unknown'}`));
+      window.clearInterval(timer);
+    }, 400);
+    return () => window.clearInterval(timer);
+  }, [active]);
+
+  return detected;
 };
 
 export interface WalletConnectProps extends MidnightWalletState {
@@ -40,78 +44,158 @@ export interface WalletConnectProps extends MidnightWalletState {
   readonly onDisconnect: () => void;
 }
 
-/** Live check of injected Midnight connectors, shown directly on the page. */
-const useWalletDetection = (active: boolean): string[] | null => {
-  const [detected, setDetected] = React.useState<string[] | null>(null);
-  React.useEffect(() => {
-    if (!active) return undefined;
-    setDetected(null);
-    const timer = setInterval(() => {
-      const m = (window as unknown as { midnight?: Record<string, unknown> }).midnight;
-      const wallets = m
-        ? Object.values(m).filter(
-            (w): w is { name?: string; apiVersion?: string } =>
-              !!w && typeof w === 'object' && 'apiVersion' in w,
-          )
-        : [];
-      setDetected(wallets.map((w) => `${w.name ?? 'unknown wallet'} (API ${w.apiVersion})`));
-      clearInterval(timer);
-    }, 400);
-    return () => clearInterval(timer);
-  }, [active]);
-  return detected;
-};
-
-export const WalletConnect: React.FC<WalletConnectProps> = ({ status, address, walletName, error, onConnect, onDisconnect }) => {
+export const WalletConnect: React.FC<WalletConnectProps> = ({
+  status,
+  address,
+  walletName,
+  error,
+  onConnect,
+  onDisconnect,
+}) => {
   const detected = useWalletDetection(status === 'disconnected');
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    setCopied(false);
+  }, [address]);
+
+  const copyAddress = async () => {
+    if (!address) return;
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  };
+
   return (
-  <section style={styles.card}>
-    <h2 style={styles.title}>1AM WALLET</h2>
+    <section className="surface-card" id="identity" aria-labelledby="wallet-title" aria-busy={status === 'connecting'}>
+      <div className="card-header">
+        <span className="section-index" aria-hidden="true">01</span>
+        <div className="card-header-copy">
+          <div className="section-kicker">Identity layer</div>
+          <h2 className="card-title" id="wallet-title">Connect your wallet</h2>
+          <p className="card-description">
+            1AM is the source of organizer authority. Connect once to manage access for this event.
+          </p>
+        </div>
+        <span className={`status-chip ${status === 'connected' ? 'status-chip-success' : status === 'connecting' ? 'status-chip-warning' : ''}`}>
+          <span className="status-dot" aria-hidden="true" />
+          {status === 'connected' ? 'Connected' : status === 'connecting' ? 'Connecting' : 'Not connected'}
+        </span>
+      </div>
 
-    {status === 'disconnected' && (
-      <>
-        {error ? (
-          <p style={styles.error}>⚠ {error}</p>
-        ) : (
-          <p style={{ margin: '0 0 12px', color: '#8b949e', fontSize: 14 }}>
-            Not connected. Connect your Midnight wallet to interact with the event contract.          </p>
-        )}
-        {detected !== null && detected.length > 0 && !error && (
-          <p style={{ color: detected.length > 1 ? '#f85149' : '#3fb950', fontSize: 13, marginTop: 8 }}>
-            {detected.length > 1 ? '⚠ Multiple wallets detected: ' : 'Detected: '}
-            {detected.join(', ')}
-            {detected.length > 1 && (
-              <span style={{ display: 'block', marginTop: 4, color: '#f85149' }}>
-                Multiple wallet extensions conflict. Keep only the 1AM wallet enabled, disable the others, then refresh.
-              </span>
+      <div className="wallet-body">
+        {status === 'disconnected' && (
+          <>
+            <div className="wallet-hero">
+              <div className="wallet-icon-shell" aria-hidden="true">
+                <WalletIcon />
+              </div>
+              <div>
+                <h3>Bring your identity onchain</h3>
+                <p>Your wallet signs the authorization, not a secret pasted into this page.</p>
+              </div>
+            </div>
+
+            {error && (
+              <div className="alert alert-error" role="alert">
+                <AlertIcon />
+                <div className="alert-copy">
+                  <strong>Connection needs attention</strong>
+                  {error}
+                </div>
+              </div>
             )}
-          </p>
-        )}
-        {detected !== null && detected.length === 0 && (
-          <p style={{ color: '#d29922', fontSize: 13, marginTop: 8 }}>
-            ⚠ No Midnight wallet detected in this browser. Install <b>1AM</b> (get1am.com or the Chrome Web Store),
-            unlock it, then <b>refresh this page</b>.
-          </p>
-        )}
-        <button style={styles.button} onClick={onConnect}>
-          Connect Wallet
-        </button>
-      </>
-    )}
 
-    {status === 'connecting' && (
-      <p style={{ color: '#d29922', fontSize: 14 }}>            ⏳ Waiting for your 1AM wallet… approve the request.</p>
-    )}
+            {detected === null && (
+              <div className="wallet-detection" role="status">
+                <LoaderIcon />
+                <div className="wallet-detection-copy">
+                  <strong>Looking for a Midnight wallet</strong>
+                  <span>Checking this browser for a compatible 1AM connection.</span>
+                </div>
+              </div>
+            )}
 
-    {status === 'connected' && (
-      <>
-        <span style={styles.connected}>● Connected via {walletName ?? 'Midnight wallet'}</span>
-        <div style={styles.addressBox}>{address}</div>
-        <button style={{ ...styles.button, ...styles.buttonSecondary }} onClick={onDisconnect}>
-          Disconnect
-        </button>
-      </>
-    )}
-  </section>
+            {detected !== null && detected.length > 0 && !error && (
+              <div className={`wallet-detection ${detected.length > 1 ? 'wallet-detection-warning' : ''}`} role="status">
+                <ShieldCheckIcon />
+                <div className="wallet-detection-copy">
+                  <strong>{detected.length > 1 ? 'Multiple wallets detected' : 'Wallet ready to connect'}</strong>
+                  <span>{detected.join(' · ')}</span>
+                  {detected.length > 1 && (
+                    <span>Keep only the 1AM extension enabled, then refresh this page to avoid connection conflicts.</span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {detected !== null && detected.length === 0 && (
+              <div className="wallet-detection wallet-detection-warning" role="status">
+                <AlertIcon />
+                <div className="wallet-detection-copy">
+                  <strong>No Midnight wallet detected</strong>
+                  <span>
+                    Install and unlock 1AM, then refresh. <a href="https://get1am.com" target="_blank" rel="noreferrer">Get 1AM <ExternalLinkIcon width="12" height="12" /></a>
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="button-row">
+              <button className="primary-button" type="button" onClick={onConnect}>
+                <WalletIcon className="button-icon" />
+                Connect 1AM wallet
+              </button>
+            </div>
+            <div className="privacy-note">
+              <LockIcon />
+              Your organizer secret never enters a form or leaves your wallet.
+            </div>
+          </>
+        )}
+
+        {status === 'connecting' && (
+          <div className="wallet-connecting" role="status" aria-live="polite">
+            <LoaderIcon />
+            <div>
+              <strong>Waiting for 1AM</strong>
+              <p>Approve the network connection in your wallet. This page will continue automatically.</p>
+            </div>
+          </div>
+        )}
+
+        {status === 'connected' && address && (
+          <>
+            <div className="connected-identity">
+              <div className="wallet-icon-shell" aria-hidden="true">
+                <WalletIcon />
+              </div>
+              <div>
+                <span className="wallet-status-label">Wallet connected</span>
+                <h3>{walletName ?? 'Midnight wallet'}</h3>
+                <p>Your wallet is ready for organizer and access actions.</p>
+              </div>
+            </div>
+            <div className="address-block">
+              <span className="address-label">Shielded address</span>
+              <div className="address-row">
+                <code title={address}>{shortenAddress(address)}</code>
+                <button className="icon-button" type="button" onClick={copyAddress} aria-label="Copy wallet address" title="Copy address">
+                  {copied ? <CheckIcon /> : <CopyIcon />}
+                </button>
+              </div>
+            </div>
+            <div className="connected-meta">
+              <span><span className="status-dot" aria-hidden="true" /> Secure browser session</span>
+              <button className="secondary-button" type="button" onClick={onDisconnect}>Disconnect wallet</button>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
   );
 };

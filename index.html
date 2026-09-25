@@ -3,64 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ZKEventAccess — Midnight dApp</title>
+    <meta name="theme-color" content="#07111f" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="ZK Event Access is a privacy-preserving event credential ledger on Midnight. Counts stay public; organizer authority stays private."
+    />
+    <meta property="og:title" content="ZK Event Access" />
+    <meta
+      property="og:description"
+      content="Issue and verify event credentials without revealing who holds them."
+    />
+    <meta property="og:type" content="website" />
+    <link rel="icon" type="image/svg+xml" href="/zk-event-access.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <title>ZK Event Access — Private event credentials</title>
     <style>
-      :root {
-        color-scheme: dark;
-      }
-      *, *::before, *::after {
-        box-sizing: border-box;
-      }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        background: #0d1117;
-        color: #e6edf3;
-        line-height: 1.5;
-        -webkit-font-smoothing: antialiased;
-      }
-      @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
-      }
-      @keyframes pulse {
-        0%, 100% { opacity: 1; }
-        50% { opacity: 0.6; }
-      }
-      .zk-spinner {
-        display: inline-block;
-        width: 16px;
-        height: 16px;
-        border: 2.5px solid rgba(88, 166, 255, 0.2);
-        border-top-color: #58a6ff;
-        border-radius: 50%;
-        animation: spin 0.75s linear infinite;
-        vertical-align: middle;
-      }
-      .zk-spinner-amber {
-        border-color: rgba(210, 153, 34, 0.2);
-        border-top-color: #d29922;
-      }
-      .responsive-grid-2 {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-      }
-      .responsive-privacy-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 12px;
-        margin-top: 16px;
-      }
-      @media (max-width: 600px) {
-        .responsive-grid-2,
-        .responsive-privacy-grid {
-          grid-template-columns: 1fr !important;
-        }
-        #root > main {
-          padding: 24px 14px !important;
-        }
-      }
+      html { background: #07111f; }
+      body { margin: 0; }
     </style>
   </head>
   <body>

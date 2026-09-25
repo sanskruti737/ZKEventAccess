@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">ZK Event Access</title>
+  <desc id="desc">A shield and keyhole representing private event credentials.</desc>
+  <defs>
+    <linearGradient id="bg" x1="12" y1="8" x2="116" y2="124" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173c59"/>
+      <stop offset="0.55" stop-color="#101f3a"/>
+      <stop offset="1" stop-color="#211946"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="30" y1="20" x2="100" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8cf3dc"/>
+      <stop offset="0.48" stop-color="#72b8ff"/>
+      <stop offset="1" stop-color="#b79bff"/>
+    </linearGradient>
+    <linearGradient id="shield" x1="42" y1="34" x2="88" y2="98" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#f5fffd"/>
+      <stop offset="1" stop-color="#b5e9ef"/>
+    </linearGradient>
+    <filter id="shadow" x="16" y="14" width="96" height="104" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="7" flood-color="#020a15" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="32" fill="url(#bg)"/>
+  <circle cx="94" cy="28" r="31" fill="url(#glow)" opacity="0.16"/>
+  <circle cx="28" cy="105" r="38" fill="url(#glow)" opacity="0.1"/>
+  <path d="M64 24 94 34v22.5C94 77.7 81.2 92.4 64 100 46.8 92.4 34 77.7 34 56.5V34l30-10Z" fill="url(#shield)" filter="url(#shadow)"/>
+  <path d="M64 37v37" stroke="#163858" stroke-width="8" stroke-linecap="round"/>
+  <circle cx="64" cy="45" r="8" fill="#163858"/>
+  <path d="M54 74h20" stroke="#163858" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="99" cy="96" r="4" fill="#8CF3DC"/>
+  <circle cx="106" cy="88" r="2" fill="#B79BFF"/>
+</svg>

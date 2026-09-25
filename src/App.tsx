@@ -4,16 +4,17 @@ import { Layout } from './components/Layout';
 import { WalletConnect } from './components/WalletConnect';
 import { CircuitCall } from './components/CircuitCall';
 
+const networkId = import.meta.env.VITE_NETWORK_ID || 'preprod';
+
 const App: React.FC = () => {
   const wallet = useMidnight();
 
   React.useEffect(() => {
     wallet.autoConnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [wallet.autoConnect]);
 
   return (
-    <Layout network="preprod">
+    <Layout network={networkId}>
       <WalletConnect
         status={wallet.status}
         address={wallet.address}

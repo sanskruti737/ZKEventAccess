@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './globals';
+import './styles.css';
 import '@midnight-ntwrk/dapp-connector-api';
 import { setNetworkId, type NetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import App from './App';

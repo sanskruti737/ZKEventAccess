@@ -1,0 +1,17 @@
+{
+  "name": "ZK Event Access",
+  "short_name": "ZK Event Access",
+  "description": "Privacy-preserving event credentials on Midnight.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07111f",
+  "theme_color": "#07111f",
+  "icons": [
+    {
+      "src": "/zk-event-access.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

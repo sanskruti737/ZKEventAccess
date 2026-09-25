@@ -140,15 +140,21 @@ See [PROPOSAL.md](PROPOSAL.md)
 
 ## Product X Profile
 
-Follow me on X: [https://x.com/sanskrutichz](https://x.com/sanskrutichz)
+Product X Profile: [https://x.com/ZKEventAccess](https://x.com/ZKEventAccess)
 
 ## Level 5 — User Validation
 
 - Target: 70 Preprod users
-- Current: 51 / 70 (see [USERS.md](USERS.md) for wallet addresses)
+- Current: 51 / 70 (historical wallet-address log: [USERS.md](USERS.md))
 - Raw feedback responses: [users.csv](users.csv)
 - Feedback log and iteration notes: [docs/FEEDBACK.md](docs/FEEDBACK.md)
 - Try the live Preprod demo: [https://zkevent-access.vercel.app](https://zkevent-access.vercel.app)
+
+### ZK Event Access – Onboarded Users
+
+**Canonical onboarded-user record:** [Google Sheet](https://docs.google.com/spreadsheets/d/1CfUq8dCAGiFZ81ChCBPGZsLS5xVqSwLZEoSM-HdF3DY/edit?usp=sharing)
+
+`USERS.md` is a historical wallet-address log, not the canonical onboarded-user database.
 
 ## Screenshots
 

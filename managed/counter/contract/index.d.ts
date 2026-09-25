@@ -8,6 +8,7 @@ export type ImpureCircuits<PS> = {
   increment(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   decrement(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   announce(context: __compactRuntime.CircuitContext<PS>, message_0: string): __compactRuntime.CircuitResults<PS, []>;
+  rotate(context: __compactRuntime.CircuitContext<PS>, newSecret_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   read(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, bigint>;
 }
 
@@ -15,6 +16,7 @@ export type ProvableCircuits<PS> = {
   increment(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   decrement(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   announce(context: __compactRuntime.CircuitContext<PS>, message_0: string): __compactRuntime.CircuitResults<PS, []>;
+  rotate(context: __compactRuntime.CircuitContext<PS>, newSecret_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   read(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, bigint>;
 }
 
@@ -25,11 +27,13 @@ export type Circuits<PS> = {
   increment(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   decrement(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, []>;
   announce(context: __compactRuntime.CircuitContext<PS>, message_0: string): __compactRuntime.CircuitResults<PS, []>;
+  rotate(context: __compactRuntime.CircuitContext<PS>, newSecret_0: Uint8Array): __compactRuntime.CircuitResults<PS, []>;
   read(context: __compactRuntime.CircuitContext<PS>): __compactRuntime.CircuitResults<PS, bigint>;
 }
 
 export type Ledger = {
   readonly counter: bigint;
+  readonly contractAddress: Uint8Array;
   readonly organizer: Uint8Array;
   readonly announcement: string;
 }

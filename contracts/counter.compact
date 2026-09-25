@@ -42,7 +42,9 @@ witness organizerSecret(): Bytes<32>;
 // Number of access credentials currently issued (public audit count).
 export ledger counter: Uint<64>;
 
-// Commitment to the organizer's secret key: persistentHash(domain || sk).
+export ledger contractAddress: Bytes<32>;
+
+// Commitment to the organizer's secret key: persistentHash(domain || contractAddress || sk).
 export ledger organizer: Bytes<32>;
 
 // Latest public announcement, published only via explicit disclose().
@@ -51,8 +53,8 @@ export ledger announcement: Opaque<"string">;
 // INTERNAL circuit (not exported): derives the public commitment for a given
 // secret key using a domain-separated persistent hash.
 circuit publicKey(sk: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>(
-    [pad(32, "zkEventAccess:organizer"), sk]);
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "zkEventAccess:organizer"), contractAddress, sk]);
 }
 
 // CONSTRUCTOR: runs once at deployment. Binds the public `organizer`
@@ -61,8 +63,11 @@ circuit publicKey(sk: Bytes<32>): Bytes<32> {
 // because the hash output is (derived) witness data being written to ledger.
 constructor() {
   const zero: Uint<64> = 0;
+  const sk = organizerSecret();
+  assert(sk != pad(32, ""), "organizer secret must not be empty");
   counter = zero;
-  organizer = disclose(publicKey(organizerSecret()));
+  contractAddress = disclose(kernel.self().bytes);
+  organizer = disclose(publicKey(sk));
 }
 
 // EXPORTED CIRCUITS -----------------------------------------------------------
@@ -93,6 +98,14 @@ export circuit announce(message: Opaque<"string">): [] {
   const sk = organizerSecret();
   assert(organizer == publicKey(sk), "only the organizer can announce");
   announcement = disclose(message);
+}
+
+export circuit rotate(newSecret: Bytes<32>): [] {
+  const sk = organizerSecret();
+  assert(organizer == publicKey(sk), "only the organizer can rotate authority");
+  assert(newSecret != pad(32, ""), "new organizer secret must not be empty");
+  assert(newSecret != sk, "new organizer secret must differ");
+  organizer = disclose(publicKey(newSecret));
 }
 
 // Read the current public credential count (no witness needed).

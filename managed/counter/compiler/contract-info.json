@@ -47,6 +47,25 @@
       }
     },
     {
+      "name": "rotate",
+      "pure": false,
+      "proof": true,
+      "arguments": [
+        {
+          "name": "newSecret",
+          "type": {
+            "type-name": "Bytes",
+            "length": 32
+          }
+        }
+      ],
+      "result-type": {
+        "type-name": "Tuple",
+        "types": [
+        ]
+      }
+    },
+    {
       "name": "read",
       "pure": false,
       "proof": true,
@@ -83,7 +102,7 @@
       }
     },
     {
-      "name": "organizer",
+      "name": "contractAddress",
       "index": 1,
       "exported": true,
       "storage": "Cell",
@@ -93,8 +112,18 @@
       }
     },
     {
-      "name": "announcement",
+      "name": "organizer",
       "index": 2,
+      "exported": true,
+      "storage": "Cell",
+      "type": {
+        "type-name": "Bytes",
+        "length": 32
+      }
+    },
+    {
+      "name": "announcement",
+      "index": 3,
       "exported": true,
       "storage": "Cell",
       "type": {

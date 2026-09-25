@@ -1,6 +1,6 @@
 # Preprod Users — Level 5
 
-Target: 50 verified wallet addresses
+Target: 70 verified wallet addresses
 
 | #  | Wallet Address | Date Added |
 |----|----------------|------------|
@@ -54,4 +54,6 @@ Target: 50 verified wallet addresses
 | 48 | `mn_addr_preprod1pqzq2gg9txp3zeq7kgaylmmwwe8a4rnsz3zjxznfxh9uffdxlmgqswn2vs` | 2026-09-23 |
 | 49 | `mn_addr_preprod13mkvpxpax9jl652ahmuemh0n9uvlv3efums04z6admnxt3zvxxjqus0aey` | 2026-09-23 |
 | 50 | `mn_addr_preprod1v9egmncc5p2s58uvp3ne9eu4h56xwvgffcfhkplgrct9p8djaxmqhgq7jk` | 2026-09-23 |
-Current count: 50 / 50
+| 51 | `mn_addr_preprod1v0jfxrmc2tzuxj9rajnt2hz7wh5999uyjwfjjwk3ep9r9926mztsv95az5` | 2026-09-23 |
+
+Current count: 51 / 70

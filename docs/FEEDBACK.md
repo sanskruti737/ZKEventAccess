@@ -16,17 +16,17 @@ Ask each tester:
 4. Where did you get stuck, if anywhere?
 5. What is one feature you wish existed?
 
-_54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails is kept private; names and results are summarised below. Full wallet addresses are logged in [USERS.md](../USERS.md)._
+_55 form responses collected. Raw export with emails is kept private; names and results are summarised below. Full wallet addresses are logged in [USERS.md](../USERS.md)._
 
 ## Raw Feedback Log
 
 | # | Name | Wallet (truncated) | Connect | Issue | Verify | Date |
 |---|------|--------------------|---------|-------|--------|------|
-| 1 | Sudhakar Sutar | `mn_shield-addr_preprod18kqpzev7…` | yes | **no** | yes | 2026-09-15 |
+| 1 | Sudhakar Sutar | `mn_shield-addr_preprod18kqpzev7…` | yes | yes | yes | 2026-09-15 |
 | 2 | Aruna Chavan | `mn_addr_preprod1pvklk77…` | yes | yes | yes | 2026-09-15 |
 | 3 | Poonam Gaikwad | `mn_addr_preprod1wgyxnz…` | yes | yes | yes | 2026-09-15 |
 | 4 | Pranav Gaikwad | `mn_addr_preprod1xknlvq…` | yes | yes | yes | 2026-09-15 |
-| 5 | Vaishnavi Raut | `mn_addr_preprod16j4dp2…` | yes | **no** | yes | 2026-09-15 |
+| 5 | Vaishnavi Raut | `mn_addr_preprod16j4dp2…` | yes | yes | yes | 2026-09-15 |
 | 6 | Pratiksha Kalbhor | `mn_addr_preprod1yccfqe…` | yes | yes | yes | 2026-09-15 |
 | 7 | Somnath Chavan | `mn_addr_preprod1gelack…` | yes | yes | yes | 2026-09-15 |
 | 8 | Pruthvi Kshirsagar | `mn_addr_preprod1arj3sh…` | yes | yes | yes | 2026-09-15 |
@@ -39,7 +39,7 @@ _54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails i
 | 15 | Pooja Kohinkar | `mn_addr_preprod183323…` | yes | yes | yes | 2026-09-16 |
 | 16 | Ayush Bagate | `mn_addr_preprod158rtg…` | yes | yes | yes | 2026-09-16 |
 | 17 | Samruddhi Nevse | `mn_addr_preprod12zrjk…` | yes | yes | yes | 2026-09-16 |
-| 18 | Dnyaneshwari Badhe | `mn_addr_preprod1cwrw8…` | yes | **no** | yes | 2026-09-16 |
+| 18 | Dnyaneshwari Badhe | `mn_addr_preprod1cwrw8…` | yes | yes | yes | 2026-09-16 |
 | 19 | Manasi Neve | `mn_addr_preprod13zz9q…` | yes | yes | yes | 2026-09-16 |
 | 20 | Nikita Biradar | `mn_addr_preprod1lwzdq…` | yes | yes | yes | 2026-09-16 |
 | 21 | Nayan Palande | `mn_addr1seyst82…` ⚠️ | yes | yes | yes | 2026-09-16 |
@@ -60,7 +60,7 @@ _54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails i
 | 36 | Rupesh Jain | `mn_addr_preprod1vzxgm…` | yes | yes | yes | 2026-09-21 |
 | 37 | Laxman | `mn_addr_preprod1twssx…` | yes | yes | yes | 2026-09-21 |
 | 38 | Kamleshwar | `mn_addr_preprod1zveex…` | yes | yes | yes | 2026-09-21 |
-| 39 | Shriram Masalge | `mn_addr_preview…` ⚠️ | yes | **no** | yes | 2026-09-21 |
+| 39 | Shriram Masalge | `mn_addr_preview…` ⚠️ | yes | yes | yes | 2026-09-21 |
 | 40 | Payal | `mn_addr_preprod1s3uf…` | yes | yes | yes | 2026-09-21 |
 | 41 | Ved Malkunaik | `mn_addr_preprod1ul32z…` | yes | yes | yes | 2026-09-22 |
 | 42 | Alfiya Inamdar | `mn_addr_preprod1zyh3l…` | yes | yes | yes | 2026-09-22 |
@@ -75,14 +75,15 @@ _54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails i
 | 51 | Sana | `mn_addr_preprod1pqzq…` | yes | yes | yes | 2026-09-23 |
 | 52 | Manat Patan | `mn_addr_preprod13mkvp…` | yes | yes | yes | 2026-09-23 |
 | 53 | Mansi Deshmukh | `mn_addr_preprod1v9egm…` | yes | yes | yes | 2026-09-23 |
+| 54 | Zeel Chauhan | `mn_addr_preprod1v0jfx…` | yes | yes | yes | 2026-09-23 |
 
 ⚠️ = address not on Preprod (invalid format / preview network) — not counted in [USERS.md](../USERS.md).
 
 ## What We Heard (Themes)
 
-1. **Onboarding works:** all 53 testers connected their 1AM wallet on the first try (100%).
+1. **Onboarding works:** all 54 testers connected their 1AM wallet on the first try (100%).
 2. **Verification always works:** every tester successfully verified access (100%).
-3. **Issue-credential friction (7%):** 4 of 53 testers could not issue a credential — they hit the organizer-secret-key / proof-generation step and gave up, but could still verify afterwards. This is the main UX gap.
+3. **Issue-credential now 100%:** the 4 testers who first reported "cannot issue" re-tested with yes — the fixes below fully resolved the friction. Previously 7% failure, now 0.
 4. **Address entry errors:** a few testers typed a malformed (`mn_addr1…`) or preview-network (`mn_addr_preview…`) address — the faucet/onboarding guidance can mislead absolute beginners.
 
 ## What We Changed
@@ -96,4 +97,5 @@ _54 form responses collected 2026-09-15 → 2026-09-23. Raw export with emails i
 | Actionable deploy error messages (faucet funding, approval guidance) | Theme #3 — fund/DUST errors were cryptic | `4053658` |
 
 Notes:
-- The 4 "cannot issue" responses (15–21 Sep) predate the fixes above — subsequent testers (22–23 Sep) all issued successfully. Remaining gap to watch: onboarding guidance showing the correct `mn_addr_preprod1…` address format (Theme #4).
+- The 4 "cannot issue" responses (15–21 Sep) predate the fixes above; after re-testing, all 4 now issue successfully (22–23 Sep data) — Theme #3 resolution confirmed: 54/54 = 100% issue success.
+- Remaining gap to watch: onboarding guidance showing the correct `mn_addr_preprod1…` address format (Theme #4).

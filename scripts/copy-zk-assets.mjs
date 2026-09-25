@@ -4,7 +4,7 @@ import { join } from 'node:path';
 // Copies compiled ZK key material into public/ so that FetchZkConfigProvider
 // can fetch it at `${origin}/keys/<circuit>.prover` etc. in dev and production.
 const root = process.cwd();
-const managed = join(root, 'managed', 'counter');
+const managed = join(root, 'managed', 'zk-event-access');
 const pub = join(root, 'public');
 
 mkdirSync(join(pub, 'keys'), { recursive: true });

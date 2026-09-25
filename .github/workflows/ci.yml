@@ -33,7 +33,7 @@ jobs:
         run: compact update 0.31.1
 
       - name: compact compile
-        run: compact compile contracts/counter.compact managed/counter
+        run: compact compile contracts/zk-event-access.compact managed/zk-event-access
 
       - name: Run test suite
         run: npm test

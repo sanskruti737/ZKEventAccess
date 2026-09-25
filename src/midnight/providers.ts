@@ -13,9 +13,9 @@ import {
 import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
 import { ConnectedAPI, type InitialAPI } from '@midnight-ntwrk/dapp-connector-api';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import type { CounterCircuitKeys, CounterProviders } from './counter-api';
-import { COUNTER_PRIVATE_STATE_ID } from './counter-api';
-import type { CounterPrivateState } from '../witnesses.js';
+import type { ZKEventAccessCircuitKeys, ZKEventAccessProviders } from './zk-event-access-api';
+import { ZK_EVENT_ACCESS_PRIVATE_STATE_ID } from './zk-event-access-api';
+import type { ZKEventAccessPrivateState } from '../witnesses.js';
 import { indexedDbPrivateStateProvider } from './indexed-db-private-state-provider';
 import type { Logger } from './logger';
 
@@ -145,7 +145,7 @@ const deriveOrganizerSecretKey = async (api: ConnectedAPI): Promise<Uint8Array> 
 };
 
 export interface ProvidersBundle {
-  readonly providers: CounterProviders;
+  readonly providers: ZKEventAccessProviders;
   readonly connectedAPI: ConnectedAPI;
   readonly address: string;
   readonly walletName: string;
@@ -202,7 +202,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
 
-  const zkConfigProvider = new FetchZkConfigProvider<CounterCircuitKeys>(window.location.origin, fetch.bind(window));
+  const zkConfigProvider = new FetchZkConfigProvider<ZKEventAccessCircuitKeys>(window.location.origin, fetch.bind(window));
   const keyMaterialProvider = zkConfigProvider;
 
   let proofProvider: ProofProvider;
@@ -245,11 +245,11 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   // wallet's shielded address so a different wallet on this browser can never
   // read it. Never written to localStorage/sessionStorage.
   const privateStateProvider = indexedDbPrivateStateProvider<
-    typeof COUNTER_PRIVATE_STATE_ID,
-    CounterPrivateState
+    typeof ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
+    ZKEventAccessPrivateState
   >(address);
 
-  const providers: CounterProviders = {
+  const providers: ZKEventAccessProviders = {
     privateStateProvider,
     zkConfigProvider,
     proofProvider,

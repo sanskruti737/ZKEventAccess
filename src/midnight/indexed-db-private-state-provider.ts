@@ -7,14 +7,14 @@ import type { PrivateStateId, PrivateStateProvider } from '@midnight-ntwrk/midni
  * This is a persistent drop-in for the old in-memory provider, and it is the
  * ledger SDK's private-state seam: `deployContract` / `findDeployedContract` /
  * `call` read and write the contract's private state (and the organizer secret
- * key witness at `COUNTER_PRIVATE_STATE_ID`) exclusively through this
+ * key witness at `ZK_EVENT_ACCESS_PRIVATE_STATE_ID`) exclusively through this
  * `PrivateStateProvider`. Persistence lives in IndexedDB only — never
  * localStorage or sessionStorage — and is scoped per wallet account via the
  * wallet's shielded address, so two wallets on the same browser can never read
  * each other's organizer secret.
  *
  * Values are stored with the browser structured clone algorithm, so the
- * `CounterPrivateState` object (`{ organizerSecretKey: Uint8Array }`) round-trips
+ * `ZKEventAccessPrivateState` object (`{ organizerSecretKey: Uint8Array }`) round-trips
  * without any lossy serialization.
  */
 const DB_NAME = 'zkeventaccess.privateState';

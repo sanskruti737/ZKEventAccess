@@ -1,4 +1,4 @@
-import * as Counter from '../../managed/counter/contract/index.js';
+import * as ZKEventAccess from '../../managed/zk-event-access/contract/index.js';
 import { CompactTypeBytes, CompactTypeVector, persistentHash } from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import type { ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
@@ -10,14 +10,14 @@ import {
 import { combineLatest, firstValueFrom, from, map, type Observable } from 'rxjs';
 import { toHex } from '@midnight-ntwrk/midnight-js-utils';
 import type { MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
-import { witnesses, type CounterPrivateState } from '../witnesses.js';
+import { witnesses, type ZKEventAccessPrivateState } from '../witnesses.js';
 import type { Logger } from './logger';
 
-export const COUNTER_PRIVATE_STATE_ID = 'counterPrivateState';
+export const ZK_EVENT_ACCESS_PRIVATE_STATE_ID = 'counterPrivateState';
 
-export type CounterCircuitKeys = Exclude<keyof Counter.Contract['impureCircuits'], number | symbol>;
+export type ZKEventAccessCircuitKeys = Exclude<keyof ZKEventAccess.Contract['impureCircuits'], number | symbol>;
 
-export type CounterContract = Counter.Contract<CounterPrivateState, Counter.Witnesses<CounterPrivateState>>;
+export type ZKEventAccessContract = ZKEventAccess.Contract<ZKEventAccessPrivateState, ZKEventAccess.Witnesses<ZKEventAccessPrivateState>>;
 
 /**
  * Wallet-owned organizer identity capability.
@@ -34,24 +34,24 @@ export interface OrganizerIdentity {
   readonly deriveOrganizerSecretKey: () => Promise<Uint8Array>;
 }
 
-export type CounterProviders = MidnightProviders<
-  CounterCircuitKeys,
-  typeof COUNTER_PRIVATE_STATE_ID,
-  CounterPrivateState
+export type ZKEventAccessProviders = MidnightProviders<
+  ZKEventAccessCircuitKeys,
+  typeof ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
+  ZKEventAccessPrivateState
 > & {
   readonly organizerIdentity?: OrganizerIdentity;
 };
 
 /** The contract binding with our witnesses attached; key material comes from the zkConfigProvider at runtime. */
-export const CompiledCounterContract = CompiledContract.make<Counter.Contract<CounterPrivateState>>(
-  'counter',
-  Counter.Contract,
+export const CompiledZKEventAccessContract = CompiledContract.make<ZKEventAccess.Contract<ZKEventAccessPrivateState>>(
+  'zk-event-access',
+  ZKEventAccess.Contract,
 ).pipe(
   CompiledContract.withWitnesses(witnesses),
-  CompiledContract.withCompiledFileAssets('./managed/counter'),
+  CompiledContract.withCompiledFileAssets('./managed/zk-event-access'),
 );
 
-export interface CounterLedgerState {
+export interface ZKEventAccessLedgerState {
   /** Current public credential count. */
   readonly counter: bigint;
   readonly announcement: string;
@@ -85,7 +85,7 @@ const withTimeout = async <T>(promise: Promise<T>, ms: number, message: string):
 /**
  * Hex digests of organizer keys this wallet has genuinely provisioned. With a
  * persistent (IndexedDB) private-state provider, the gate for "is this a real
- * organizer key?" is simply: a 32-byte non-zero value at `COUNTER_PRIVATE_STATE_ID`.
+ * organizer key?" is simply: a 32-byte non-zero value at `ZK_EVENT_ACCESS_PRIVATE_STATE_ID`.
  * The read-only join placeholder (`new Uint8Array(32)`, all zeros) can therefore
  * never be mistaken for organizer authority.
  */
@@ -98,7 +98,7 @@ const isZeroKey = (key: Uint8Array): boolean => {
 
 /**
  * Resolves the organizer secret key (proof witness) from the wallet-bound,
- * persistent private state provider, under `COUNTER_PRIVATE_STATE_ID`. It is
+ * persistent private state provider, under `ZK_EVENT_ACCESS_PRIVATE_STATE_ID`. It is
  * never read from or written to localStorage or sessionStorage, and never
  * reaches the UI, `window`, or the network.
  *
@@ -110,10 +110,10 @@ const isZeroKey = (key: Uint8Array): boolean => {
  * organizer identity. Otherwise `null` is returned so callers can decide to
  * derive the wallet-owned key rather than fabricating one.
  */
-const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<Uint8Array | null> => {
+const resolveOrganizerSecretKey = async (providers: ZKEventAccessProviders): Promise<Uint8Array | null> => {
   try {
-    const state = (await providers.privateStateProvider.get(COUNTER_PRIVATE_STATE_ID)) as
-      | CounterPrivateState
+    const state = (await providers.privateStateProvider.get(ZK_EVENT_ACCESS_PRIVATE_STATE_ID)) as
+      | ZKEventAccessPrivateState
       | null;
     const key = state?.organizerSecretKey;
     if (key && key.length === 32 && !isZeroKey(key)) {
@@ -138,7 +138,7 @@ const resolveOrganizerSecretKey = async (providers: CounterProviders): Promise<U
  */
 let organizerKeyDerivation: Promise<Uint8Array> | null = null;
 
-const deriveWalletOrganizerKey = (providers: CounterProviders): Promise<Uint8Array> => {
+const deriveWalletOrganizerKey = (providers: ZKEventAccessProviders): Promise<Uint8Array> => {
   if (!providers.organizerIdentity) {
     return Promise.reject(
       new Error(
@@ -174,19 +174,19 @@ const deriveWalletOrganizerKey = (providers: CounterProviders): Promise<Uint8Arr
  * concurrent callers share one wallet signData request, so a single user action
  * can never fan out into duplicate 1AM popups.
  */
-const resolveOrDeriveOrganizerSecretKey = async (providers: CounterProviders): Promise<Uint8Array> => {
+const resolveOrDeriveOrganizerSecretKey = async (providers: ZKEventAccessProviders): Promise<Uint8Array> => {
   const existing = await resolveOrganizerSecretKey(providers);
   if (existing) return existing;
   const derived = await deriveWalletOrganizerKey(providers);
-  await providers.privateStateProvider.set(COUNTER_PRIVATE_STATE_ID, { organizerSecretKey: derived });
+  await providers.privateStateProvider.set(ZK_EVENT_ACCESS_PRIVATE_STATE_ID, { organizerSecretKey: derived });
   return derived;
 };
 
-/** A joined instance of the ZKEventAccess counter contract. */
-export class CounterAPI {
+/** A joined instance of the ZK Event Access contract. */
+export class ZKEventAccessAPI {
   private constructor(
-    public readonly deployed: FoundContract<CounterContract>,
-    providers: CounterProviders,
+    public readonly deployed: FoundContract<ZKEventAccessContract>,
+    providers: ZKEventAccessProviders,
     private readonly logger?: Logger,
   ) {
     this.providers = providers;
@@ -196,21 +196,21 @@ export class CounterAPI {
     this.state$ = combineLatest([
       providers.publicDataProvider.contractStateObservable(this.contractAddress, { type: 'latest' }).pipe(
         map((contractState) => {
-          const ledger = Counter.ledger(contractState.data);
+          const ledger = ZKEventAccess.ledger(contractState.data);
           return {
             counter: ledger.counter,
             announcement: ledger.announcement,
             organizer: toHex(ledger.organizer),
-          } satisfies CounterLedgerState;
+          } satisfies ZKEventAccessLedgerState;
         }),
       ),
-      from(providers.privateStateProvider.get(COUNTER_PRIVATE_STATE_ID) as Promise<CounterPrivateState | null>),
+      from(providers.privateStateProvider.get(ZK_EVENT_ACCESS_PRIVATE_STATE_ID) as Promise<ZKEventAccessPrivateState | null>),
     ]).pipe(map(([ledger]) => ledger));
   }
 
   readonly contractAddress: ContractAddress;
-  readonly state$: Observable<CounterLedgerState>;
-  private readonly providers: CounterProviders;
+  readonly state$: Observable<ZKEventAccessLedgerState>;
+  private readonly providers: ZKEventAccessProviders;
 
   /**
    * Issues one access credential (organizer-only circuit).
@@ -245,7 +245,7 @@ export class CounterAPI {
    * persisted/saved event is actually owned by the currently connected 1AM
    * wallet before reusing it.
    */
-  static async currentOrganizerCommitment(providers: CounterProviders): Promise<string> {
+  static async currentOrganizerCommitment(providers: ZKEventAccessProviders): Promise<string> {
     const sk = await resolveOrDeriveOrganizerSecretKey(providers);
     return organizerCommitment(sk);
   }
@@ -255,12 +255,12 @@ export class CounterAPI {
    * refresh the public credential count immediately after a finalized issuance,
    * independent of the state$ poll cadence.
    */
-  async readLatest(): Promise<CounterLedgerState> {
+  async readLatest(): Promise<ZKEventAccessLedgerState> {
     const contractState = await this.providers.publicDataProvider.queryContractState(this.contractAddress);
     if (!contractState) {
       throw new Error('Could not read the current on-chain state for this event.');
     }
-    const ledger = Counter.ledger(contractState.data);
+    const ledger = ZKEventAccess.ledger(contractState.data);
     return {
       counter: ledger.counter,
       announcement: ledger.announcement,
@@ -276,22 +276,22 @@ export class CounterAPI {
    * placeholder when no genuine organizer key is persisted, so a persisted
    * organizer key is never clobbered by `findDeployedContract`.
    */
-  static async join(providers: CounterProviders, contractAddress: ContractAddress, logger?: Logger): Promise<CounterAPI> {
-    logger?.info({ joinContract: { contractAddress } }, 'joining deployed counter');
+  static async join(providers: ZKEventAccessProviders, contractAddress: ContractAddress, logger?: Logger): Promise<ZKEventAccessAPI> {
+    logger?.info({ joinContract: { contractAddress } }, 'joining deployed ZK Event Access contract');
 
     const organizerSecretKey = await resolveOrganizerSecretKey(providers);
-    const initialPrivateState: CounterPrivateState = {
+    const initialPrivateState: ZKEventAccessPrivateState = {
       organizerSecretKey: organizerSecretKey ?? new Uint8Array(32),
     };
 
-    const deployed = await findDeployedContract<CounterContract>(providers, {
+    const deployed = await findDeployedContract<ZKEventAccessContract>(providers, {
       contractAddress,
-      compiledContract: CompiledCounterContract,
-      privateStateId: COUNTER_PRIVATE_STATE_ID,
+      compiledContract: CompiledZKEventAccessContract,
+      privateStateId: ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
       initialPrivateState,
     });
 
-    return new CounterAPI(deployed, providers, logger);
+    return new ZKEventAccessAPI(deployed, providers, logger);
   }
 
   /**
@@ -309,19 +309,19 @@ export class CounterAPI {
    * successful; otherwise it throws and leaves the active event untouched.
    */
   static async deployNew(
-    providers: CounterProviders,
+    providers: ZKEventAccessProviders,
     logger?: Logger,
     onDeployedAddress?: (address: string) => void,
-  ): Promise<CounterAPI> {
-    logger?.info('deploying new counter instance');
+  ): Promise<ZKEventAccessAPI> {
+    logger?.info('deploying new ZK Event Access contract instance');
     const organizerSecretKey = await resolveOrDeriveOrganizerSecretKey(providers);
     const expectedOrganizer = organizerCommitment(organizerSecretKey);
     console.log('[debug] wallet-derived organizer commitment to register:', expectedOrganizer);
 
     const deployed = await withTimeout(
       deployContract(providers, {
-        compiledContract: CompiledCounterContract,
-        privateStateId: COUNTER_PRIVATE_STATE_ID,
+        compiledContract: CompiledZKEventAccessContract,
+        privateStateId: ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
         initialPrivateState: { organizerSecretKey },
       }),
       DEPLOY_TIMEOUT_MS,
@@ -337,7 +337,7 @@ export class CounterAPI {
     onDeployedAddress?.(deployedAddress);
     console.log('[debug] waiting to verify on-chain organizer of the new event...');
 
-    const api = new CounterAPI(deployed, providers, logger);
+    const api = new ZKEventAccessAPI(deployed, providers, logger);
     let organizer: string;
     try {
       ({ organizer } = await withTimeout(

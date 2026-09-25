@@ -1,30 +1,30 @@
 import type { WitnessContext } from '@midnight-ntwrk/compact-runtime';
-import type { Ledger } from '../managed/counter/contract/index.js';
+import type { Ledger } from '../managed/zk-event-access/contract/index.js';
 
 /**
  * Private state held locally by each DApp user. It NEVER leaves the user's
  * machine — only zero-knowledge proofs about it are submitted on-chain.
  */
-export type CounterPrivateState = {
+export type ZKEventAccessPrivateState = {
   readonly organizerSecretKey: Uint8Array;
 };
 
-export const createCounterPrivateState = (
+export const createZKEventAccessPrivateState = (
   organizerSecretKey: Uint8Array,
-): CounterPrivateState => ({
+): ZKEventAccessPrivateState => ({
   organizerSecretKey,
 });
 
 /**
  * TypeScript implementation of the `organizerSecret()` witness declared in
- * counter.compact. Runs off-chain, inside the user's DApp: the Compact
+ * zk-event-access.compact. Runs off-chain, inside the user's DApp: the Compact
  * compiler holds only the declaration.
  */
 export const witnesses = {
   organizerSecret: ({
     privateState,
-  }: WitnessContext<Ledger, CounterPrivateState>): [
-    CounterPrivateState,
+  }: WitnessContext<Ledger, ZKEventAccessPrivateState>): [
+    ZKEventAccessPrivateState,
     Uint8Array,
   ] => [privateState, privateState.organizerSecretKey],
 };

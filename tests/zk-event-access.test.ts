@@ -5,11 +5,11 @@ import {
   sampleContractAddress,
   type CircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
-import { Contract, ledger, type Ledger } from '../managed/counter/contract/index.js';
+import { Contract, ledger, type Ledger } from '../managed/zk-event-access/contract/index.js';
 import {
   witnesses,
-  createCounterPrivateState,
-  type CounterPrivateState,
+  createZKEventAccessPrivateState,
+  type ZKEventAccessPrivateState,
 } from '../src/witnesses.js';
 
 // Deterministic test keys (32 bytes each, as required by Bytes<32>).
@@ -17,14 +17,14 @@ const ORGANIZER_SECRET = new Uint8Array(32).fill(7);
 const NEW_ORGANIZER_SECRET = new Uint8Array(32).fill(11);
 const IMPOSTOR_SECRET = new Uint8Array(32).fill(9);
 
-type Ctx = CircuitContext<CounterPrivateState>;
+type Ctx = CircuitContext<ZKEventAccessPrivateState>;
 
 /** Deploy the contract in a local simulator and return it with a fresh circuit context. */
-function makeContract(secret: Uint8Array): { contract: Contract<CounterPrivateState>; ctx: Ctx } {
-  const contract = new Contract<CounterPrivateState>(witnesses);
+function makeContract(secret: Uint8Array): { contract: Contract<ZKEventAccessPrivateState>; ctx: Ctx } {
+  const contract = new Contract<ZKEventAccessPrivateState>(witnesses);
   const address = sampleContractAddress();
   const init = contract.initialState(
-    createConstructorContext(createCounterPrivateState(secret), {
+    createConstructorContext(createZKEventAccessPrivateState(secret), {
       bytes: new Uint8Array(32),
     }),
   );
@@ -71,8 +71,8 @@ function containsSubsequence(haystack: Uint8Array, needle: Uint8Array): boolean 
   return false;
 }
 
-describe('ZKEventAccess counter', () => {
-  let contract: Contract<CounterPrivateState>;
+describe('ZK Event Access contract', () => {
+  let contract: Contract<ZKEventAccessPrivateState>;
   let ctx: Ctx;
 
   beforeEach(() => {
@@ -101,7 +101,7 @@ describe('ZKEventAccess counter', () => {
   it('rejects increment by anyone who does not know the organizer secret', () => {
     const impostorCtx: Ctx = {
       ...ctx,
-      currentPrivateState: createCounterPrivateState(IMPOSTOR_SECRET),
+      currentPrivateState: createZKEventAccessPrivateState(IMPOSTOR_SECRET),
     };
     expect(() => contract.impureCircuits.increment(impostorCtx)).toThrow(
       /only the organizer can issue access/,
@@ -111,7 +111,7 @@ describe('ZKEventAccess counter', () => {
   it('rejects decrement and announcement by an impostor', () => {
     const impostorCtx: Ctx = {
       ...ctx,
-      currentPrivateState: createCounterPrivateState(IMPOSTOR_SECRET),
+      currentPrivateState: createZKEventAccessPrivateState(IMPOSTOR_SECRET),
     };
     expect(() => contract.impureCircuits.decrement(impostorCtx)).toThrow(
       /only the organizer can revoke access/,
@@ -125,25 +125,25 @@ describe('ZKEventAccess counter', () => {
     const rotated = contract.impureCircuits.rotate(ctx, NEW_ORGANIZER_SECRET);
     const oldOrganizerCtx: Ctx = {
       ...rotated.context,
-      currentPrivateState: createCounterPrivateState(ORGANIZER_SECRET),
+      currentPrivateState: createZKEventAccessPrivateState(ORGANIZER_SECRET),
     };
     const newOrganizerCtx: Ctx = {
       ...rotated.context,
-      currentPrivateState: createCounterPrivateState(NEW_ORGANIZER_SECRET),
+      currentPrivateState: createZKEventAccessPrivateState(NEW_ORGANIZER_SECRET),
     };
 
     expect(() => contract.impureCircuits.increment(oldOrganizerCtx)).toThrow(
       /only the organizer can issue access/,
     );
     expect(contract.impureCircuits.increment(newOrganizerCtx).context.currentPrivateState).toEqual(
-      createCounterPrivateState(NEW_ORGANIZER_SECRET),
+      createZKEventAccessPrivateState(NEW_ORGANIZER_SECRET),
     );
   });
 
   it('rejects empty, unchanged, and unauthorized rotations', () => {
     const impostorCtx: Ctx = {
       ...ctx,
-      currentPrivateState: createCounterPrivateState(IMPOSTOR_SECRET),
+      currentPrivateState: createZKEventAccessPrivateState(IMPOSTOR_SECRET),
     };
     expect(() => contract.impureCircuits.rotate(ctx, new Uint8Array(32))).toThrow(
       /new organizer secret must not be empty/,

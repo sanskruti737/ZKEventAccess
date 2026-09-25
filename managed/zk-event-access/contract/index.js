@@ -72,7 +72,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('increment',
                                      'argument 1 (as invoked from Typescript)',
-                                     'counter.compact line 77 char 1',
+                                     'zk-event-access.compact line 77 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -95,7 +95,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('decrement',
                                      'argument 1 (as invoked from Typescript)',
-                                     'counter.compact line 85 char 1',
+                                     'zk-event-access.compact line 85 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -119,7 +119,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('announce',
                                      'argument 1 (as invoked from Typescript)',
-                                     'counter.compact line 97 char 1',
+                                     'zk-event-access.compact line 97 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -146,14 +146,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('rotate',
                                      'argument 1 (as invoked from Typescript)',
-                                     'counter.compact line 103 char 1',
+                                     'zk-event-access.compact line 103 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(newSecret_0.buffer instanceof ArrayBuffer && newSecret_0.BYTES_PER_ELEMENT === 1 && newSecret_0.length === 32)) {
           __compactRuntime.typeError('rotate',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'counter.compact line 103 char 1',
+                                     'zk-event-access.compact line 103 char 1',
                                      'Bytes<32>',
                                      newSecret_0)
         }
@@ -179,7 +179,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('read',
                                      'argument 1 (as invoked from Typescript)',
-                                     'counter.compact line 112 char 1',
+                                     'zk-event-access.compact line 112 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -352,7 +352,7 @@ export class Contract {
     if (!(result_0.buffer instanceof ArrayBuffer && result_0.BYTES_PER_ELEMENT === 1 && result_0.length === 32)) {
       __compactRuntime.typeError('organizerSecret',
                                  'return value',
-                                 'counter.compact line 38 char 1',
+                                 'zk-event-access.compact line 38 char 1',
                                  'Bytes<32>',
                                  result_0)
     }
@@ -399,7 +399,7 @@ export class Contract {
     const one_0 = 1n;
     const tmp_0 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('counter.compact line 81 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('zk-event-access.compact line 81 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,

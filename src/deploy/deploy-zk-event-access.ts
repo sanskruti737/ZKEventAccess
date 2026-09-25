@@ -1,10 +1,10 @@
 /**
- * Deploy the ZKEventAccess counter contract to a Midnight network.
+ * Deploy the ZK Event Access contract to a Midnight network.
  *
  * Usage: npm run deploy -- --network preview|preprod
  *
  * Mirrors the create-mn-app hello-world deploy flow, adapted for the
- * counter.compact contract (which has a private-state witness).
+ * zk-event-access.compact contract (which has a private-state witness).
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -14,7 +14,7 @@ import { WebSocket } from 'ws';
 
 import { resolveNetwork, getOrCreateWallet, formatWalletBackupNotice, recordDeployment } from './network';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
-import type { CounterPrivateState } from '../witnesses';
+import type { ZKEventAccessPrivateState } from '../witnesses';
 import { witnesses } from '../witnesses';
 
 // Midnight SDK imports
@@ -28,11 +28,11 @@ import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-j
 // @ts-expect-error Required for wallet sync
 globalThis.WebSocket = WebSocket;
 
-const PRIVATE_STATE_ID = 'counterPrivateState';
+const ZK_EVENT_ACCESS_PRIVATE_STATE_ID = 'counterPrivateState';
 
 // ─── Organizer secret key (private witness source) ─────────────────────────────
 //
-// counter.compact fetches the organizer's secret key via a witness backed by
+// zk-event-access.compact fetches the organizer's secret key via a witness backed by
 // private state. The key lives ONLY on this machine (.organizer-key, gitignored);
 // the chain only ever sees its hash commitment written by the constructor.
 
@@ -78,7 +78,7 @@ async function waitForProofServer(maxAttempts = 60, delayMs = 2000): Promise<boo
 
 // ─── Compiled contract loading ─────────────────────────────────────────────────
 
-const zkConfigPath = path.resolve(__dirname, '..', '..', 'managed', 'counter');
+const zkConfigPath = path.resolve(__dirname, '..', '..', 'managed', 'zk-event-access');
 const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
 
 if (!fs.existsSync(contractPath)) {
@@ -86,9 +86,9 @@ if (!fs.existsSync(contractPath)) {
   process.exit(1);
 }
 
-const Counter = await import(pathToFileURL(contractPath).href);
+const ZKEventAccess = await import(pathToFileURL(contractPath).href);
 
-  const compiledContract = CompiledContract.make('counter', Counter.Contract).pipe(
+  const compiledContract = CompiledContract.make('zk-event-access', ZKEventAccess.Contract).pipe(
     CompiledContract.withWitnesses(witnesses as never),
     CompiledContract.withCompiledFileAssets(zkConfigPath),
   );
@@ -141,11 +141,11 @@ const SEED = WALLET.seed;
 
 async function main() {
   console.log('\n╔══════════════════════════════════════════════════════════════╗');
-  console.log(`║  Deploy ZKEventAccess counter to ${network}`);
+  console.log(`║  Deploy ZK Event Access contract to ${network}`);
   console.log('╚══════════════════════════════════════════════════════════════╝\n');
 
   const organizerSecretKey = loadOrCreateOrganizerKey();
-  const initialPrivateState: CounterPrivateState = { organizerSecretKey };
+  const initialPrivateState: ZKEventAccessPrivateState = { organizerSecretKey };
 
   console.log('─── Wallet setup ───────────────────────────────────────────────\n');
   console.log('  Creating wallet...');
@@ -268,7 +268,7 @@ async function main() {
       deployed = await deployContract(providers, {
         compiledContract: compiledContract as any,
         args: [],
-        privateStateId: PRIVATE_STATE_ID,
+        privateStateId: ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
         initialPrivateState,
       });
       break;

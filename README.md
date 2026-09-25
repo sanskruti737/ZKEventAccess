@@ -91,7 +91,7 @@ npm install
 # 4. Start the local proof server (port 6300)
 docker run -d --name midnight-proof-server -p 6300:6300 midnightnetwork/proof-server
 
-# 5. Compile the contract (generates managed/counter) and copy ZK assets
+# 5. Compile the contract (generates managed/zk-event-access) and copy ZK assets
 npm run compile && npm run copy-zk-assets
 
 # 6. Run the contract test suite (9 tests)
@@ -126,7 +126,7 @@ It executes the following workflow:
 1. **Checkout code:** Checks out repository files using `actions/checkout@v4`.
 2. **Install Node.js v22:** Sets up Node.js v22 with npm caching via `actions/setup-node@v4`.
 3. **npm install:** Installs dependencies from `package.json`.
-4. **compact compile:** Installs the Midnight Compact compiler and compiles `contracts/counter.compact` into TypeScript interfaces, proving/verifier keys, and ZKIR artifacts.
+4. **compact compile:** Installs the Midnight Compact compiler and compiles `contracts/zk-event-access.compact` into TypeScript interfaces, proving/verifier keys, and ZKIR artifacts.
 5. **Run test suite:** Executes `npm test` running 9 automated tests with Vitest, validating circuit authorization, state transitions, and zero-knowledge privacy guarantees.
 
 ## Usage Guide

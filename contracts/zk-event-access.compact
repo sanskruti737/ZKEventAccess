@@ -4,7 +4,7 @@ import CompactStandardLibrary;
 
 /*
  * ============================================================================
- *  ZKEventAccess — counter.compact
+ *  ZKEventAccess — zk-event-access.compact
  * ============================================================================
  *
  *  A privacy-preserving event access ledger. An organizer issues and revokes

@@ -315,18 +315,10 @@ Contract address: `fb24191c6928e59a9490942d6343fb6facfb5a19965c1f85096c06c78af6f
 
 ### Live dApp walkthrough
 
-⛔ **This screenshot is not publicly viewable.** The Google Drive file
-`17x1JBv00z54lU5T0Bf8wp7Ezfs1yJJUk` is not shared publicly — following the link
-returns HTTP 401, and the direct-download endpoint returns a Google **sign-in
-page** rather than the image. Fixing this needs the file's sharing changed to
-"Anyone with the link"; until then there is no working walkthrough screenshot,
-so no link is presented here as if there were.
-
-The dApp itself is reachable and public: <https://zkevent-access.vercel.app>.
+[View browser flow screenshot](https://drive.google.com/file/d/17x1JBv00z54lU5T0Bf8wp7Ezfs1yJJUk/view?usp=sharing)
 
 ## Demo Video
 
 [Demo Video](https://drive.google.com/file/d/1tNhJQMC3benbvTU1CxF0gux03AjrP0vU/view?usp=sharing)
-(verified publicly viewable)
 
 

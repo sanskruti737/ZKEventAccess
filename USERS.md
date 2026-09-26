@@ -1,4 +1,29 @@
-# Preprod Users — Level 5
+# Preprod Users — Level 5 (DEPRECATED as a source of truth)
+
+> **This file is a historical wallet-address log. It is NOT the canonical
+> onboarded-user record and must not be treated as one.**
+>
+> **Canonical record:** the
+> [ZK Event Access — Onboarded Users Google Sheet](https://docs.google.com/spreadsheets/d/1CfUq8dCAGiFZ81ChCBPGZsLS5xVqSwLZEoSM-HdF3DY/edit?usp=sharing),
+> which holds the same 50 people as `users.xlsx` — name, email and wallet
+> address, one row each — and is what the user-validation target is measured
+> against.
+>
+> Why this file was retired as canonical:
+>
+> - It records **wallet addresses only**. No name, no email, so it cannot answer
+>   "who is onboarded", only "which addresses were seen".
+> - It carries **51 addresses against the canonical 50**. The extra row is #1,
+>   `mn_addr_preprod1pkuw26zzt5…` (2026-09-12) — the earliest entry, and the
+>   only address here that is *not* in the canonical record. It is most likely
+>   the maintainer's own testing wallet rather than a beta user's, but that has
+>   not been confirmed, so the row is left in place and flagged here instead of
+>   being deleted or reclassified.
+> - The two files disagreed on count, which is exactly the failure mode a
+>   canonical source exists to prevent. Prefer the Sheet.
+
+Kept because the per-address "Date Added" history it records does not exist
+anywhere else. Nothing downstream should read this file as a user list.
 
 Target: 70 verified wallet addresses
 

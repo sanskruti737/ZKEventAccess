@@ -22,7 +22,7 @@ _55 form responses collected. Raw export with emails is kept private; names and 
 
 | # | Name | Wallet (truncated) | Connect | Issue | Verify | Date |
 |---|------|--------------------|---------|-------|--------|------|
-| 1 | Sudhakar Sutar | `mn_shield-addr_preprod18kqpzev7…` | yes | yes | yes | 2026-09-15 |
+| 1 | Sudhakar Sutar | `mn_shield-addr_preprod18kqpzev7…` ⚠️ | yes | yes | yes | 2026-09-15 |
 | 2 | Aruna Chavan | `mn_addr_preprod1pvklk77…` | yes | yes | yes | 2026-09-15 |
 | 3 | Poonam Gaikwad | `mn_addr_preprod1wgyxnz…` | yes | yes | yes | 2026-09-15 |
 | 4 | Pranav Gaikwad | `mn_addr_preprod1xknlvq…` | yes | yes | yes | 2026-09-15 |
@@ -50,7 +50,7 @@ _55 form responses collected. Raw export with emails is kept private; names and 
 | 26 | Khushi Kshirsagar | `mn_addr_preprod1k22ll…` | yes | yes | yes | 2026-09-19 |
 | 27 | Santosh Danke | `mn_addr_preprod1qm66w…` | yes | yes | yes | 2026-09-21 |
 | 28 | K. Shirsagar | `mn_addr_preprod1wumy3…` | yes | yes | yes | 2026-09-21 |
-| 29 | Krishna Maral | `mn_shield-addr_preprod18kqpzev7…` | yes | yes | yes | 2026-09-21 |
+| 29 | Krishna Maral | `mn_shield-addr_preprod18kqpzev7…` ⚠️ | yes | yes | yes | 2026-09-21 |
 | 30 | Gopal Velankar | `mn_addr_preprod1wxjq2…` | yes | yes | yes | 2026-09-21 |
 | 31 | Komal Dhore | `mn_addr_preprod143z4g…` | yes | yes | yes | 2026-09-21 |
 | 32 | Kirti Mane | `mn_addr_preprod1ff3z7…` | yes | yes | yes | 2026-09-21 |
@@ -77,7 +77,18 @@ _55 form responses collected. Raw export with emails is kept private; names and 
 | 53 | Mansi Deshmukh | `mn_addr_preprod1v9egm…` | yes | yes | yes | 2026-09-23 |
 | 54 | Zeel Chauhan | `mn_addr_preprod1v0jfx…` | yes | yes | yes | 2026-09-23 |
 
-⚠️ = address not on Preprod (invalid format / preview network) — not counted in [USERS.md](../USERS.md).
+⚠️ = address not a canonical Preprod `mn_addr_preprod1…` wallet — malformed
+(`mn_addr1…`), preview-network (`mn_addr_preview…`), or a shield address
+(`mn_shield-addr…`). Shield addresses are not organizer wallets: rows 1 and 29
+record the *same* shield address for two different people, which cannot be two
+distinct wallets, so neither is counted toward the onboarded-user total and
+neither appears in the canonical record. No address has been substituted or
+invented for them.
+
+The canonical onboarded-user record is the
+[Google Sheet](https://docs.google.com/spreadsheets/d/1CfUq8dCAGiFZ81ChCBPGZsLS5xVqSwLZEoSM-HdF3DY/edit?usp=sharing)
+(50 users), which matches `users.xlsx` one-for-one. This file is the historical
+per-response log and is **not** the source of truth for who is onboarded.
 
 ## What We Heard (Themes)
 

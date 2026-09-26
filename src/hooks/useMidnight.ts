@@ -55,7 +55,7 @@ export const useMidnight = () => {
       throw new WalletNotFoundError();
     }
 
-    console.log(`[app] connect attempt ${attempt + 1}, wallet: ${wallet.name}`);
+    logger?.debug({ attempt: attempt + 1, wallet: wallet.name }, 'connect attempt');
     const connectPromise = wallet.connect(NETWORK_ID);
     const timeoutPromise = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Connection timed out. The 1AM wallet popup may have been blocked.')), 30_000),

@@ -184,20 +184,20 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
 
   try {
     const status = await connectedAPI.getConnectionStatus();
-    console.log('[wallet] connection status:', JSON.stringify(status));
+    logger.debug({ connectionStatus: status }, '1AM wallet connection status');
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     if (/shutdown|closed|used/i.test(detail)) {
       throw new Error('1AM wallet channel closed. Disable other wallet extensions, refresh, and try again.');
     }
-    console.warn('[wallet] getConnectionStatus warning:', detail);
+    logger.warn(`1AM wallet getConnectionStatus warning: ${detail}`);
   }
 
   let config: Partial<{ proverServerUri?: string; indexerUri?: string; indexerWsUri?: string }> = {};
   try {
     config = (await connectedAPI.getConfiguration()) ?? {};
   } catch {
-    console.warn('[wallet] getConfiguration failed — using fallback endpoints');
+    logger.warn('1AM wallet getConfiguration failed - using fallback endpoints');
   }
   const indexerUri = config.indexerUri || FALLBACK_INDEXER_HTTP;
   const indexerWsUri = config.indexerWsUri || FALLBACK_INDEXER_WS;
@@ -209,7 +209,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
   try {
     const walletProvingProvider = await connectedAPI.getProvingProvider(keyMaterialProvider);
     proofProvider = createProofProvider(walletProvingProvider);
-    console.log('[wallet] ZK proving delegated to the 1AM wallet');
+    logger.debug('ZK proving delegated to the 1AM wallet');
   } catch (err) {
     const fallbackUri = CONFIGURED_PROVER_URI ?? config.proverServerUri;
     if (!fallbackUri) {
@@ -218,7 +218,7 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
           'VITE_PROOF_SERVER_URL is configured.',
       );
     }
-    console.warn('[app] 1AM wallet proving unavailable, using configured proof server:', String(err));
+    logger.warn(`1AM wallet proving unavailable, using configured proof server: ${String(err)}`);
     proofProvider = httpClientProofProvider(fallbackUri, keyMaterialProvider);
   }
 
@@ -232,8 +232,12 @@ const initializeProviders = async (logger: Logger, connectedPromise: Promise<Con
     address = shieldedAddresses.shieldedAddress ?? 'unknown';
     coinPublicKey = shieldedAddresses.shieldedCoinPublicKey ?? '';
     encryptionPublicKey = shieldedAddresses.shieldedEncryptionPublicKey ?? '';
-    console.log('[debug] connected 1AM wallet:', initialAPI.name, 'shieldedAddress:', address);
-    console.log('[debug] wallet shieldedCoinPublicKey:', coinPublicKey);
+    // Through the logger, not console.log: these were `[debug]`-prefixed local
+    // diagnostics that shipped to every browser session. The shielded address and
+    // coin public key are public by construction, so this is noise reduction
+    // rather than a disclosure fix -- but it now respects the configured level
+    // instead of always printing.
+    logger.debug({ wallet: initialAPI.name, shieldedAddress: address }, 'connected wallet identified');
   } catch {
     throw new Error('Connected, but the wallet did not return your address. Try reconnecting.');
   }

@@ -21,6 +21,26 @@ import { witnesses, type ZKEventAccessPrivateState } from '../witnesses.js';
 import type { Logger } from './logger';
 import { FOREIGN_ORGANIZER_HEADLINE } from './active-event';
 
+/**
+ * The private-state id the organizer secret key is stored under.
+ *
+ * ── DO NOT "FIX" THE OLD-LOOKING VALUE ──────────────────────────────────────
+ *
+ * `'counterPrivateState'` is a leftover from when the contract was called
+ * `counter`, and it reads exactly like a stale name that should be brought in
+ * line with "ZK Event Access". It must not be.
+ *
+ * This string is a PERSISTENCE KEY, not a label. It is the IndexedDB key every
+ * already-onboarded browser stores its organizer secret under, and that secret
+ * is derived from the 1AM wallet's `signData`, which is non-deterministic — so
+ * it cannot be re-derived, re-entered or recovered. Renaming this value would
+ * leave every existing browser looking up an empty slot, report the key as
+ * permanently lost, and strand each of those users' events as unissuable, with
+ * no path back short of deploying and paying for a brand-new event.
+ *
+ * The constant NAME is the ZK Event Access one; the VALUE is frozen history. If
+ * the contract is ever renamed again, leave this string exactly as it is.
+ */
 export const ZK_EVENT_ACCESS_PRIVATE_STATE_ID = 'counterPrivateState';
 
 export type ZKEventAccessCircuitKeys = Exclude<keyof ZKEventAccess.Contract['impureCircuits'], number | symbol>;
@@ -584,13 +604,13 @@ export class ZKEventAccessAPI {
     // can — and it is the SAME resolution the constructor was given, not a fresh
     // one, so the chain and this expectation can never describe two organizers.
     const expectedOrganizer = identity.commitment;
-    console.log('[deploy] wallet-derived organizer commitment:', expectedOrganizer);
+    logger?.debug({ expectedOrganizer }, 'deploy: expected organizer commitment resolved from the compiled constructor');
     // The deployment transaction is finalized on-chain at this point, so the
     // real address is a fact — publish it immediately so the caller can record
     // it as UNVERIFIED even if the verification read below times out on a
     // lagging indexer. This callback must never be treated as "activated".
     onDeploymentFinalized?.(deployedAddress);
-    console.log('[deploy] new event on-chain:', deployedAddress, '— reading its organizer for verification...');
+    logger?.info({ deployedAddress }, 'deploy: transaction finalized on-chain, reading its organizer for verification');
 
     const api = new ZKEventAccessAPI(deployed, providers, logger);
     let onChainOrganizer: string;
@@ -611,7 +631,7 @@ export class ZKEventAccessAPI {
     if (onChainOrganizer.toLowerCase() !== expectedOrganizer.toLowerCase()) {
       throw new OrganizerVerificationError(deployedAddress, onChainOrganizer, expectedOrganizer);
     }
-    console.log('[deploy] organizer verified on-chain:', onChainOrganizer);
+    logger?.debug({ onChainOrganizer }, 'deploy: on-chain organizer read back');
     logger?.info({ deployedAddress, organizer: onChainOrganizer }, 'deploy verified: connected 1AM wallet is the on-chain organizer');
     return { api, organizerCommitment: expectedOrganizer };
   }

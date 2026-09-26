@@ -96,7 +96,20 @@ const ZKEventAccess = await import(pathToFileURL(contractPath).href);
 // ─── Providers ─────────────────────────────────────────────────────────────────
 
 async function createProviders(walletCtx: WalletContext) {
-  const privateStatePassword = process.env.PRIVATE_STATE_PASSWORD?.trim() || 'Local-Devnet-Development-Placeholder-1';
+  // The private state store holds the ORGANIZER SECRET under this id. Falling
+  // back to a password that is committed in this repository would encrypt that
+  // key under a value published in the public source, so the value is no longer
+  // invented here: a deploy with no PRIVATE_STATE_PASSWORD stops before it can
+  // write anything, instead of quietly producing a store anyone can decrypt.
+  const privateStatePassword = process.env.PRIVATE_STATE_PASSWORD?.trim();
+  if (!privateStatePassword) {
+    throw new Error(
+      'PRIVATE_STATE_PASSWORD is not set.\n' +
+        'It encrypts the organizer secret in the private state store, so this script refuses to invent one: a ' +
+        'hardcoded default would publish the key material\'s encryption password in this repository.\n' +
+        'Set it in the environment, e.g. PRIVATE_STATE_PASSWORD="$(openssl rand -base64 32)" npm run deploy',
+    );
+  }
 
   const walletProvider = {
     getCoinPublicKey: () => walletCtx.shieldedSecretKeys.coinPublicKey,
@@ -117,7 +130,11 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'counter-state',
+      // Named for ZK Event Access. Safe to rename, unlike the browser's
+      // `ZK_EVENT_ACCESS_PRIVATE_STATE_ID`: this Level store is write-only in
+      // this script, and the organizer key's durable home is `.organizer-key`
+      // (ORGANIZER_KEY_FILE above), so no stored identity depends on this label.
+      privateStateStoreName: 'zk-event-access-state',
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),

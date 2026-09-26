@@ -20,8 +20,8 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
-      - name: npm install
-        run: npm install
+      - name: Install dependencies
+        run: npm ci
 
       - name: Install Compact compiler
         run: |
@@ -34,6 +34,24 @@ jobs:
 
       - name: compact compile
         run: compact compile contracts/zk-event-access.compact managed/zk-event-access
+
+      # The test suite below transpiles TypeScript but never type-checks it, so a
+      # type error in a path no test imports would otherwise reach main green.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # Likewise nothing in `npm test` exercises the Vite build, so a broken
+      # import graph or a bundling failure would ship without CI noticing — the
+      # dApp is the deliverable, so the bundle is built here too.
+      - name: Build frontend
+        run: npm run build
+
+      # The prepared Google-Sheet upload is generated from users.xlsx, so a
+      # hand-edit to either drifting apart is a data-integrity failure, not a
+      # style one. This reads local files only and needs no network, unlike
+      # `verify:users-sheet`, which stays out of CI on purpose.
+      - name: Check canonical user record
+        run: npm run check:users
 
       - name: Run test suite
         run: npm test

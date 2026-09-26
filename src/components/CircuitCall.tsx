@@ -377,8 +377,6 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           ZKEventAccessAPI.currentOrganizerCommitment(bundle!.providers),
           eventAccessApi.readLatest(),
         ]);
-        console.log('[issue] organizer commitment — connected 1AM wallet:', expectedOrganizer);
-        console.log('[issue] organizer commitment — event on chain:      ', onChainState.organizer);
         if (expectedOrganizer.toLowerCase() !== onChainState.organizer.toLowerCase()) {
           markEventForeignOrganizer(activeEventAddress, onChainState.organizer, expectedOrganizer);
           return;
@@ -494,7 +492,6 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         (address) => {
           // The deployment is finalized on-chain, so the address is a real fact —
           // but it is NOT verified yet and must not be treated as active.
-          console.log('[deploy] recorded unverified new event:', address);
           recordUnverifiedDeployment(address);
           setActiveAddress(undefined);
           setApi(undefined);
@@ -510,8 +507,6 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       // wallet's signData is non-deterministic and would report a mismatch for a
       // correct deployment.
       const onChainState = await deployed.readLatest();
-      console.log('[deploy] on-chain organizer commitment:', onChainState.organizer);
-      console.log('[deploy] connected wallet commitment:   ', expectedOrganizer);
       if (expectedOrganizer.toLowerCase() !== onChainState.organizer.toLowerCase()) {
         throw new OrganizerVerificationError(newAddress, onChainState.organizer, expectedOrganizer);
       }

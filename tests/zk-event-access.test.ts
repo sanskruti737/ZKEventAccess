@@ -188,6 +188,41 @@ describe('ZK Event Access contract', () => {
     expect(readLedger(r1.context).announcement).toBe(message);
   });
 
+  it('issues and revokes nothing when announcing or rotating authority', () => {
+    // `counter` is the only thing an on-chain auditor reads, and the only
+    // circuits allowed to move it are `increment` and `decrement`. `announce`
+    // and `rotate` are otherwise-unrelated organizer actions, so a regression
+    // that made either of them touch the count would silently grant or revoke
+    // somebody's access — a change no auditor could distinguish from a real
+    // issuance. Nothing in the contract prevents it, so it is asserted here.
+    const issued1 = contract.impureCircuits.increment(ctx);
+    const issued2 = contract.impureCircuits.increment(issued1.context);
+    const threeIssued = contract.impureCircuits.increment(issued2.context);
+    expect(readLedger(threeIssued.context).counter).toBe(3n);
+
+    const announced = contract.impureCircuits.announce(threeIssued.context, 'Doors open at 18:00');
+    expect(readLedger(announced.context).counter).toBe(3n);
+
+    // Rotation is the riskier of the two: it rewrites the `organizer` cell
+    // itself, so it is exactly the kind of circuit where an off-by-one on an
+    // unrelated ledger cell would slip through review.
+    const rotated = contract.impureCircuits.rotate(announced.context, NEW_ORGANIZER_SECRET);
+    expect(readLedger(rotated.context).counter).toBe(3n);
+    expect(contract.impureCircuits.read(rotated.context).result).toBe(3n);
+
+    // And the count is still live afterwards: it did not merely appear
+    // unchanged, it still governs issue and revoke under the new key. The
+    // rotated state is paired with the NEW secret, because the stale private
+    // state can no longer authorize anything — which is the rotation guarantee
+    // asserted separately above.
+    const underNewKey: Ctx = {
+      ...rotated.context,
+      currentPrivateState: createZKEventAccessPrivateState(NEW_ORGANIZER_SECRET),
+    };
+    const afterRotation = contract.impureCircuits.increment(underNewKey);
+    expect(readLedger(afterRotation.context).counter).toBe(4n);
+  });
+
   // ─── Privacy: private inputs are never exposed ──────────────────────────────
 
   it('stores only a commitment to the organizer key, never the key itself', () => {

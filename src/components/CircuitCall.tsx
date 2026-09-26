@@ -26,7 +26,6 @@ import {
   staleContractBuildCircuits,
   staleContractBuildMessage,
   transactionPendingMessage,
-  type ActiveEventRecord,
 } from '../midnight/active-event';
 import {
   ActivityIcon,

@@ -262,7 +262,7 @@ describe('2. a successful wallet-backed deployment creates an active event', () 
 describe('3. the address the deployment returned is the address persisted', () => {
   it('persists exactly the address deployContract finalized at, not some other one', async () => {
     chainAcceptsDeploymentAt(EVENT_A);
-    const { api, deployedAddress } = await deployVerifyAndActivate();
+    const { deployedAddress } = await deployVerifyAndActivate();
 
     const record = readActiveEventRecord();
     expect(record?.address).toBe(deployedAddress);
@@ -335,7 +335,7 @@ describe('6. Issue credential uses the active verified address', () => {
     expect(gate.ok).toBe(true);
     if (!gate.ok) throw new Error('gate must pass');
 
-    findDeployedContractMock.mockImplementation(async (p: ZKEventAccessProviders, options: any) => {
+    findDeployedContractMock.mockImplementation(async (_p: ZKEventAccessProviders, options: any) => {
       // The SDK's non-destructive join reads the stored state; it must never be
       // handed an `initialPrivateState`, which would be WRITTEN over the key.
       expect(Object.prototype.hasOwnProperty.call(options, 'initialPrivateState')).toBe(false);
@@ -526,7 +526,7 @@ describe('verifying access reads the public ledger without submitting anything',
     // what produced "A transaction is already pending" for a read-only action.
     const increment = vi.fn(async () => undefined);
     const read = vi.fn(async () => undefined);
-    findDeployedContractMock.mockImplementation(async (p: ZKEventAccessProviders, options: any) => ({
+    findDeployedContractMock.mockImplementation(async (_p: ZKEventAccessProviders, options: any) => ({
       deployTxData: { public: { contractAddress: options.contractAddress, txHash: '0x1' } },
       callTx: { increment, read },
     }));
@@ -546,7 +546,7 @@ describe('verifying access reads the public ledger without submitting anything',
   it('offers no transaction-submitting read method to regress back to', async () => {
     chainAcceptsDeploymentAt(EVENT_A);
     const { providers, deployedAddress } = await deployVerifyAndActivate();
-    findDeployedContractMock.mockImplementation(async (p: ZKEventAccessProviders, options: any) => ({
+    findDeployedContractMock.mockImplementation(async (_p: ZKEventAccessProviders, options: any) => ({
       deployTxData: { public: { contractAddress: options.contractAddress, txHash: '0x1' } },
       callTx: { increment: vi.fn(), read: vi.fn() },
     }));

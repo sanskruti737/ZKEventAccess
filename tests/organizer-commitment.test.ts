@@ -72,7 +72,6 @@ describe('off-chain organizer commitment mirrors the contract exactly', () => {
   });
 
   it('hashes the zero placeholder, NOT the deployed address (regression)', () => {
-    const l = runConstructor(SECRET);
     // Correct: domain || 32 zero bytes || sk
     expect(organizerCommitment(SECRET)).toBe(hash([DOMAIN, new Uint8Array(32), SECRET], 3));
     // What the previous (broken) implementation produced: domain || real address || sk

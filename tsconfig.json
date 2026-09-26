@@ -7,6 +7,14 @@
     "jsx": "react-jsx",
     "types": ["node", "vite/client"],
     "strict": true,
+    // No ESLint/Biome config or dependency exists in this project, and adding a
+    // linter is a dependency decision rather than a bug fix. These three are the
+    // checks TypeScript already performs, so they are enabled here instead: they
+    // make `tsc` reject dead code and an unhandled switch fallthrough, which is
+    // the class of defect a linter would otherwise catch, with nothing added.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "noEmit": true,
     "esModuleInterop": true,

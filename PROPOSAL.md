@@ -32,7 +32,7 @@ chain:
   be private (never visible in logs, UI, or network traffic).
 - Cost and UX are practical: proofs are created client-side (using the local
   Docker proof server during development, wallet-managed proof serving in
-  production) and submitted via the Lace wallet with normal transaction
+  production) and submitted via the 1AM wallet with normal transaction
   balancing.
 
 ## Data Model

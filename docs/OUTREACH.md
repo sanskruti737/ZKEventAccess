@@ -10,7 +10,7 @@ Testing a privacy dApp on Midnight Preprod and need beta users!
 ZK Event Access lets event organizers issue and verify access credentials with zero-knowledge proofs. Anyone can audit the public credential count on-chain, but who holds each credential stays completely private.
 
 What you do (~2 min):
-1. Install the 1AM or Lace Midnight wallet (preprod network).
+1. Install the 1AM Midnight wallet (preprod network).
 2. Open the demo and try "Verify access".
 3. DM me your wallet address so I can log you as a test user.
 
@@ -31,7 +31,7 @@ Hi [NAME],
 I built an event dApp on Midnight (Preprod) and would love for you to try it as part of a user-validation round. ZK Event Access is an access-credential ledger where an organizer issues credentials via local zero-knowledge proofs — the credential count is public and auditable, but no one can tell who holds what.
 
 To test:
-1. Install the 1AM wallet (or Lace), switch to the Midnight Preprod network, and fund it from the faucet (https://midnight-tmnight-preprod.nethermind.dev).
+1. Install the 1AM wallet, switch to the Midnight Preprod network, and fund it from the faucet (https://midnight-tmnight-preprod.nethermind.dev).
 2. Open https://zkevent-access.vercel.app, connect your wallet, and try "Verify access".
 3. Reply with your wallet address so I can log you, plus any feedback (bugs, UX, missing features).
 

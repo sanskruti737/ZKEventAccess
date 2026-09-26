@@ -72,7 +72,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('increment',
                                      'argument 1 (as invoked from Typescript)',
-                                     'zk-event-access.compact line 77 char 1',
+                                     'zk-event-access.compact line 92 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -95,7 +95,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('decrement',
                                      'argument 1 (as invoked from Typescript)',
-                                     'zk-event-access.compact line 85 char 1',
+                                     'zk-event-access.compact line 104 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -119,7 +119,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('announce',
                                      'argument 1 (as invoked from Typescript)',
-                                     'zk-event-access.compact line 97 char 1',
+                                     'zk-event-access.compact line 124 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -146,14 +146,14 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('rotate',
                                      'argument 1 (as invoked from Typescript)',
-                                     'zk-event-access.compact line 103 char 1',
+                                     'zk-event-access.compact line 130 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
         if (!(newSecret_0.buffer instanceof ArrayBuffer && newSecret_0.BYTES_PER_ELEMENT === 1 && newSecret_0.length === 32)) {
           __compactRuntime.typeError('rotate',
                                      'argument 1 (argument 2 as invoked from Typescript)',
-                                     'zk-event-access.compact line 103 char 1',
+                                     'zk-event-access.compact line 130 char 1',
                                      'Bytes<32>',
                                      newSecret_0)
         }
@@ -179,7 +179,7 @@ export class Contract {
         if (!(typeof(contextOrig_0) === 'object' && contextOrig_0.currentQueryContext != undefined)) {
           __compactRuntime.typeError('read',
                                      'argument 1 (as invoked from Typescript)',
-                                     'zk-event-access.compact line 112 char 1',
+                                     'zk-event-access.compact line 139 char 1',
                                      'CircuitContext',
                                      contextOrig_0)
         }
@@ -396,10 +396,25 @@ export class Contract {
                                                             partialProofData,
                                                             sk_0)),
                             'only the organizer can issue access');
+    const maxCount_0 = 18446744073709551615n;
+    __compactRuntime.assert(!this._equal_2(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
+                                                                                                     partialProofData,
+                                                                                                     [
+                                                                                                      { dup: { n: 0 } },
+                                                                                                      { idx: { cached: false,
+                                                                                                               pushPath: false,
+                                                                                                               path: [
+                                                                                                                      { tag: 'value',
+                                                                                                                        value: { value: _descriptor_8.toValue(0n),
+                                                                                                                                 alignment: _descriptor_8.alignment() } }] } },
+                                                                                                      { popeq: { cached: false,
+                                                                                                                 result: undefined } }]).value),
+                                           maxCount_0),
+                            'credential count is at capacity: no further credential can be issued');
     const one_0 = 1n;
     const tmp_0 = ((t1) => {
                     if (t1 > 18446744073709551615n) {
-                      throw new __compactRuntime.CompactError('zk-event-access.compact line 81 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
+                      throw new __compactRuntime.CompactError('zk-event-access.compact line 100 char 13: cast from Field or Uint value to smaller Uint value failed: ' + t1 + ' is greater than 18446744073709551615');
                     }
                     return t1;
                   })(_descriptor_1.fromValue(__compactRuntime.queryLedgerState(context,
@@ -430,7 +445,7 @@ export class Contract {
   }
   _decrement_0(context, partialProofData) {
     const sk_0 = this._organizerSecret_0(context, partialProofData);
-    __compactRuntime.assert(this._equal_2(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
+    __compactRuntime.assert(this._equal_3(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
                                                                                                     partialProofData,
                                                                                                     [
                                                                                                      { dup: { n: 0 } },
@@ -493,7 +508,7 @@ export class Contract {
   }
   _announce_0(context, partialProofData, message_0) {
     const sk_0 = this._organizerSecret_0(context, partialProofData);
-    __compactRuntime.assert(this._equal_3(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
+    __compactRuntime.assert(this._equal_4(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
                                                                                                     partialProofData,
                                                                                                     [
                                                                                                      { dup: { n: 0 } },
@@ -523,7 +538,7 @@ export class Contract {
   }
   _rotate_0(context, partialProofData, newSecret_0) {
     const sk_0 = this._organizerSecret_0(context, partialProofData);
-    __compactRuntime.assert(this._equal_4(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
+    __compactRuntime.assert(this._equal_5(_descriptor_0.fromValue(__compactRuntime.queryLedgerState(context,
                                                                                                     partialProofData,
                                                                                                     [
                                                                                                      { dup: { n: 0 } },
@@ -539,10 +554,10 @@ export class Contract {
                                                             partialProofData,
                                                             sk_0)),
                             'only the organizer can rotate authority');
-    __compactRuntime.assert(!this._equal_5(newSecret_0,
+    __compactRuntime.assert(!this._equal_6(newSecret_0,
                                            new Uint8Array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])),
                             'new organizer secret must not be empty');
-    __compactRuntime.assert(!this._equal_6(newSecret_0, sk_0),
+    __compactRuntime.assert(!this._equal_7(newSecret_0, sk_0),
                             'new organizer secret must differ');
     const tmp_0 = this._publicKey_0(context, partialProofData, newSecret_0);
     __compactRuntime.queryLedgerState(context,
@@ -580,7 +595,7 @@ export class Contract {
     return true;
   }
   _equal_2(x0, y0) {
-    if (!x0.every((x, i) => y0[i] === x)) { return false; }
+    if (x0 !== y0) { return false; }
     return true;
   }
   _equal_3(x0, y0) {
@@ -596,6 +611,10 @@ export class Contract {
     return true;
   }
   _equal_6(x0, y0) {
+    if (!x0.every((x, i) => y0[i] === x)) { return false; }
+    return true;
+  }
+  _equal_7(x0, y0) {
     if (!x0.every((x, i) => y0[i] === x)) { return false; }
     return true;
   }

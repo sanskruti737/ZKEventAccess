@@ -14,10 +14,12 @@ import { assertIsContractAddress, toHex } from '@midnight-ntwrk/midnight-js-util
 import { Contract, ledger } from '../managed/zk-event-access/contract/index.js';
 import { witnesses, createZKEventAccessPrivateState } from '../src/witnesses.js';
 import {
+  OrganizerKeyPersistenceError,
   OrganizerUnverifiedError,
   OrganizerVerificationError,
   ZKEventAccessAPI,
   organizerCommitment,
+  resolveOrganizerIdentity,
   type ZKEventAccessProviders,
 } from '../src/midnight/zk-event-access-api';
 import { ZK_EVENT_ACCESS_PRIVATE_STATE_ID } from '../src/midnight/zk-event-access-api';
@@ -274,6 +276,146 @@ describe('Issue credential and Verify access read the same active event', () => 
       createZKEventAccessPrivateState(OTHER_WALLET_SK),
     );
     expect(() => contract.impureCircuits.increment(impostor)).toThrow(/only the organizer can issue access/);
+  });
+});
+
+// ─── one identity per wallet per session ──────────────────────────────────────
+
+/**
+ * A provider bundle with a REAL working private state store, plus a wallet whose
+ * `signData` is non-deterministic exactly as the real 1AM wallet's is: every call
+ * returns a DIFFERENT key. Any code that resolves the organizer identity twice
+ * therefore gets two different keys — and two different commitments — which is the
+ * failure this suite exists to prevent.
+ */
+const liveProviders = (
+  derive: () => Promise<Uint8Array>,
+  seed?: Uint8Array,
+): { providers: ZKEventAccessProviders; stored: () => Uint8Array | null } => {
+  let persisted: Uint8Array | null = seed ?? null;
+  const providers = {
+    privateStateProvider: {
+      async get() {
+        return persisted ? ({ organizerSecretKey: persisted } as ZKEventAccessPrivateState) : null;
+      },
+      async set(_key: string, state: ZKEventAccessPrivateState) {
+        persisted = state.organizerSecretKey;
+      },
+    },
+    organizerIdentity: { deriveOrganizerSecretKey: derive },
+  } as unknown as ZKEventAccessProviders;
+  return { providers, stored: () => persisted };
+};
+
+/** A wallet that returns a fresh, different key on every signing request. */
+const nonDeterministicWallet = (base = 0) => {
+  let call = base;
+  const derive = async () => new Uint8Array(32).fill(++call);
+  return { derive, calls: () => call - base };
+};
+
+describe('organizer identity is resolved once per wallet per session', () => {
+  it('never re-derives, even though the wallet signature is non-deterministic', async () => {
+    const wallet = nonDeterministicWallet();
+    const { providers } = liveProviders(wallet.derive);
+
+    const first = await resolveOrganizerIdentity(providers);
+    const second = await resolveOrganizerIdentity(providers);
+    const third = await resolveOrganizerIdentity(providers);
+
+    expect(wallet.calls()).toBe(1);
+    expect(second.commitment).toBe(first.commitment);
+    expect(third.commitment).toBe(first.commitment);
+    // The key is durable, so later calls recover it rather than re-deriving: that
+    // is what makes the identity stable across a click, a poll and a refresh.
+    expect(first.source).toBe('wallet');
+    expect(second.source).toBe('persisted');
+  });
+
+  it('falls back to the session identity if the persisted key stops being readable', async () => {
+    // Storage that loses the value mid-session must NOT cause a fresh derivation:
+    // a second signature is a different organizer, and would report a mismatch for
+    // an event this wallet plainly owns.
+    const wallet = nonDeterministicWallet();
+    let persisted: Uint8Array | null = null;
+    let dropReads = false;
+    const providers = {
+      privateStateProvider: {
+        async get() {
+          return persisted && !dropReads ? ({ organizerSecretKey: persisted } as ZKEventAccessPrivateState) : null;
+        },
+        async set(_key: string, state: ZKEventAccessPrivateState) {
+          persisted = state.organizerSecretKey;
+        },
+      },
+      organizerIdentity: { deriveOrganizerSecretKey: wallet.derive },
+    } as unknown as ZKEventAccessProviders;
+
+    const first = await resolveOrganizerIdentity(providers);
+    dropReads = true;
+    const second = await resolveOrganizerIdentity(providers);
+    expect(wallet.calls()).toBe(1);
+    expect(second.source).toBe('session');
+    expect(second.commitment).toBe(first.commitment);
+  });
+
+  it('resolves a DIFFERENT identity for a different wallet, with no leakage', async () => {
+    const a = await resolveOrganizerIdentity(liveProviders(nonDeterministicWallet(0x10).derive).providers);
+    const b = await resolveOrganizerIdentity(liveProviders(nonDeterministicWallet(0x40).derive).providers);
+    expect(a.commitment).not.toBe(b.commitment);
+  });
+
+  it('commits exactly what the contract constructor writes for that key', async () => {
+    const wallet = nonDeterministicWallet();
+    const { providers } = liveProviders(wallet.derive);
+    const identity = await resolveOrganizerIdentity(providers);
+    const { state } = deployOnChain(identity.secretKey);
+    // The whole point: the expectation IS the on-chain value, not a formula that
+    // merely looks like it.
+    expect(identity.commitment).toBe(toHex(state.organizer));
+  });
+
+  it('prefers the persisted key over the wallet, and never asks the wallet', async () => {
+    const wallet = nonDeterministicWallet();
+    const { providers } = liveProviders(wallet.derive, WALLET_SK);
+    const identity = await resolveOrganizerIdentity(providers);
+    expect(wallet.calls()).toBe(0);
+    expect(identity.source).toBe('persisted');
+    expect(identity.commitment).toBe(toHex(deployOnChain(WALLET_SK).state.organizer));
+  });
+
+  it('recovers the persisted key in a LATER session, so old events stay owned', async () => {
+    const wallet = nonDeterministicWallet();
+    const first = liveProviders(wallet.derive);
+    const deployed = await resolveOrganizerIdentity(first.providers);
+    // A refresh: brand-new provider object, same browser storage.
+    const nextSession = liveProviders(wallet.derive, first.stored() ?? undefined);
+    const recovered = await resolveOrganizerIdentity(nextSession.providers);
+    expect(wallet.calls()).toBe(1);
+    expect(recovered.source).toBe('persisted');
+    expect(recovered.commitment).toBe(deployed.commitment);
+  });
+
+  it('REFUSES to hand out an identity that cannot be persisted, instead of orphaning an event', async () => {
+    // Storage that silently discards writes: the key would be unrecoverable, so
+    // any event deployed with it could never be issued against again.
+    const wallet = nonDeterministicWallet();
+    const providers = {
+      privateStateProvider: { async get() { return null; }, async set() { /* dropped */ } },
+      organizerIdentity: { deriveOrganizerSecretKey: wallet.derive },
+    } as unknown as ZKEventAccessProviders;
+    await expect(resolveOrganizerIdentity(providers)).rejects.toBeInstanceOf(OrganizerKeyPersistenceError);
+  });
+
+  it('the deploy flow and the pre-flight issue check cannot disagree', async () => {
+    // Both go through the one resolution, so the value the deploy verifies against
+    // is by construction the value the issue check compares — no second, drifting
+    // derivation of a non-deterministic signature.
+    const wallet = nonDeterministicWallet();
+    const { providers } = liveProviders(wallet.derive);
+    const identity = await resolveOrganizerIdentity(providers);
+    expect(await ZKEventAccessAPI.currentOrganizerCommitment(providers)).toBe(identity.commitment);
+    expect(wallet.calls()).toBe(1);
   });
 });
 

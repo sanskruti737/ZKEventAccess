@@ -297,23 +297,117 @@ const deriveWalletOrganizerKey = (providers: ZKEventAccessProviders): Promise<Ui
 };
 
 /**
- * Resolves the organizer secret key from the wallet-bound private state provider
- * if this wallet provisioned one (persisted across sessions), otherwise derives
- * it from the connected 1AM wallet. The key is stored only in the private state
- * provider (IndexedDB — never localStorage/sessionStorage, never the UI, never
- * logged) and is used as the proof witness. There is no random-key fallback.
+ * Where a resolved organizer identity came from. Reported for diagnostics only —
+ * all three produce the same key and the same commitment.
  *
- * The derivation itself is single-flight (see {@link deriveWalletOrganizerKey}):
- * concurrent callers share one wallet signData request, so a single user action
- * can never fan out into duplicate 1AM popups.
+ * - `persisted`: recovered from the wallet-scoped private state provider, i.e. this
+ *   wallet provisioned it in an earlier session.
+ * - `session`:   already resolved earlier in THIS page session (see
+ *   {@link sessionOrganizerIdentities}).
+ * - `wallet`:    derived from the connected 1AM wallet just now.
  */
-const resolveOrDeriveOrganizerSecretKey = async (providers: ZKEventAccessProviders): Promise<Uint8Array> => {
-  const existing = await resolveOrganizerSecretKey(providers);
-  if (existing) return existing;
-  const derived = await deriveWalletOrganizerKey(providers);
-  await providers.privateStateProvider.set(ZK_EVENT_ACCESS_PRIVATE_STATE_ID, { organizerSecretKey: derived });
-  return derived;
+export type OrganizerIdentitySource = 'persisted' | 'session' | 'wallet';
+
+/** The one true answer to "who is the organizer for this wallet right now". */
+export interface OrganizerIdentityResolution {
+  /** The 32-byte proof witness. Never logged, never leaves the wallet. */
+  readonly secretKey: Uint8Array;
+  /** Exactly what the contract's constructor will put on-chain for this key. */
+  readonly commitment: string;
+  readonly source: OrganizerIdentitySource;
+}
+
+/**
+ * Organizer identities already resolved in this page session, keyed by the
+ * private-state provider object — which is constructed per connected wallet
+ * (src/midnight/providers.ts), so one wallet can never read another's identity and
+ * switching wallets resolves a fresh one.
+ *
+ * This exists because the wallet's `signData` is NON-DETERMINISTIC: deriving twice
+ * yields two different keys, hence two different commitments. Any second resolution
+ * after a key was already resolved would compare the chain against an identity the
+ * chain never saw, and report a mismatch for a perfectly valid deployment. The
+ * persisted private state remains the source of truth across sessions; this only
+ * pins the identity for the lifetime of one page session, where re-deriving is
+ * meaningless because the result would be a different organizer.
+ */
+const sessionOrganizerIdentities = new WeakMap<object, OrganizerIdentityResolution>();
+
+const sameSecretKey = (a: Uint8Array, b: Uint8Array): boolean =>
+  a.length === b.length && a.every((byte, index) => byte === b[index]);
+
+/**
+ * Writes the wallet-derived key to the private state provider and READS IT BACK.
+ *
+ * The key is the only durable proof that this browser owns the event: `signData`
+ * cannot reproduce it, so a key that fails to persist is lost forever and the event
+ * it deployed becomes permanently un-issuable from this wallet. Rather than deploy an
+ * event that can never be issued against, this refuses — loudly, and before any
+ * transaction is built.
+ */
+const persistOrganizerSecretKey = async (providers: ZKEventAccessProviders, secretKey: Uint8Array): Promise<void> => {
+  try {
+    await providers.privateStateProvider.set(ZK_EVENT_ACCESS_PRIVATE_STATE_ID, { organizerSecretKey: secretKey });
+  } catch (err) {
+    throw new OrganizerKeyPersistenceError(err instanceof Error ? err.message : String(err));
+  }
+  const readBack = await resolveOrganizerSecretKey(providers);
+  if (!readBack || !sameSecretKey(readBack, secretKey)) {
+    throw new OrganizerKeyPersistenceError('the private state provider did not return the key that was just written');
+  }
 };
+
+/**
+ * Resolves this wallet's organizer identity — the single entry point for "which
+ * commitment should the chain have?", used by the deploy flow, the post-deploy
+ * verification and the pre-flight issue check alike, so all three are guaranteed to
+ * be talking about the SAME organizer.
+ *
+ * Order: the persisted key wins (it is what previous events were deployed with),
+ * then this session's already-resolved identity, and only then a fresh derivation
+ * from the connected 1AM wallet — which is single-flight (see
+ * {@link deriveWalletOrganizerKey}) and must persist successfully.
+ *
+ * There is no random-key fallback and no way to supply a key from outside: the key
+ * comes from the wallet or from this wallet's own persisted private state, nothing
+ * else.
+ */
+export const resolveOrganizerIdentity = async (
+  providers: ZKEventAccessProviders,
+): Promise<OrganizerIdentityResolution> => {
+  const scope: object = providers.privateStateProvider;
+
+  const persisted = await resolveOrganizerSecretKey(providers);
+  if (persisted) {
+    const resolution: OrganizerIdentityResolution = {
+      secretKey: persisted,
+      commitment: constructorOrganizerCommitment(persisted),
+      source: 'persisted',
+    };
+    sessionOrganizerIdentities.set(scope, resolution);
+    return resolution;
+  }
+
+  const alreadyResolved = sessionOrganizerIdentities.get(scope);
+  if (alreadyResolved) return { ...alreadyResolved, source: 'session' };
+
+  const derived = await deriveWalletOrganizerKey(providers);
+  await persistOrganizerSecretKey(providers, derived);
+  const resolution: OrganizerIdentityResolution = {
+    secretKey: derived,
+    commitment: constructorOrganizerCommitment(derived),
+    source: 'wallet',
+  };
+  sessionOrganizerIdentities.set(scope, resolution);
+  return resolution;
+};
+
+/**
+ * The organizer witness key for the current session, resolved exactly once per
+ * connected wallet (see {@link resolveOrganizerIdentity}).
+ */
+const resolveOrDeriveOrganizerSecretKey = async (providers: ZKEventAccessProviders): Promise<Uint8Array> =>
+  (await resolveOrganizerIdentity(providers)).secretKey;
 
 /** A joined instance of the ZK Event Access contract. */
 export class ZKEventAccessAPI {
@@ -372,14 +466,12 @@ export class ZKEventAccessAPI {
 
   /**
    * Returns the organizer commitment the connected wallet would register if it
-   * deployed an event, resolved from the wallet-bound private state provider
-   * (persisted organizer key recovered across sessions). Used to verify that a
-   * persisted/saved event is actually owned by the currently connected 1AM
-   * wallet before reusing it.
+   * deployed an event. Resolved through {@link resolveOrganizerIdentity}, so it is
+   * the same identity the deploy flow uses — never a second, independent derivation
+   * that could differ because the wallet's `signData` is non-deterministic.
    */
   static async currentOrganizerCommitment(providers: ZKEventAccessProviders): Promise<string> {
-    const sk = await resolveOrDeriveOrganizerSecretKey(providers);
-    return constructorOrganizerCommitment(sk);
+    return (await resolveOrganizerIdentity(providers)).commitment;
   }
 
   /**
@@ -460,14 +552,21 @@ export class ZKEventAccessAPI {
    * On a verification failure this throws an {@link OrganizerVerificationError}
    * carrying BOTH values, and never asks for another deployment: the caller
    * shows the exact mismatch and stops.
+   *
+   * The returned `organizerCommitment` is the exact value this deployment was
+   * built from AND verified against on-chain. Callers must compare the on-chain
+   * cell against THAT value rather than resolving the wallet identity a second
+   * time: the wallet's `signData` is non-deterministic, so a second resolution can
+   * yield a different key and a spurious mismatch for a correct deployment.
    */
   static async deployNew(
     providers: ZKEventAccessProviders,
     logger?: Logger,
     onDeploymentFinalized?: (address: string) => void,
-  ): Promise<ZKEventAccessAPI> {
+  ): Promise<{ readonly api: ZKEventAccessAPI; readonly organizerCommitment: string }> {
     logger?.info('deploying new ZK Event Access contract instance');
-    const organizerSecretKey = await resolveOrDeriveOrganizerSecretKey(providers);
+    const identity = await resolveOrganizerIdentity(providers);
+    const organizerSecretKey = identity.secretKey;
 
     const deployed = await withTimeout(
       deployContract(providers, {
@@ -484,8 +583,9 @@ export class ZKEventAccessAPI {
     // Expected value comes from executing the compiled contract's own
     // constructor with the very key this deploy was built from, so it cannot
     // disagree with the on-chain `organizer` cell the way a hand-copied formula
-    // can.
-    const expectedOrganizer = constructorOrganizerCommitment(organizerSecretKey);
+    // can — and it is the SAME resolution the constructor was given, not a fresh
+    // one, so the chain and this expectation can never describe two organizers.
+    const expectedOrganizer = identity.commitment;
     console.log('[deploy] wallet-derived organizer commitment:', expectedOrganizer);
     // The deployment transaction is finalized on-chain at this point, so the
     // real address is a fact — publish it immediately so the caller can record
@@ -515,7 +615,7 @@ export class ZKEventAccessAPI {
     }
     console.log('[deploy] organizer verified on-chain:', onChainOrganizer);
     logger?.info({ deployedAddress, organizer: onChainOrganizer }, 'deploy verified: connected 1AM wallet is the on-chain organizer');
-    return api;
+    return { api, organizerCommitment: expectedOrganizer };
   }
 }
 
@@ -564,6 +664,30 @@ export class OrganizerVerificationError extends Error {
         `${FOREIGN_ORGANIZER_HEADLINE} Nothing was issued and the event was NOT activated.`,
     );
     this.name = 'OrganizerVerificationError';
+  }
+}
+
+/**
+ * The organizer key derived from the connected 1AM wallet could not be persisted
+ * to the wallet-scoped private state provider.
+ *
+ * This aborts BEFORE any deployment transaction is built, on purpose. The wallet's
+ * `signData` is non-deterministic, so a key that is not persisted cannot be
+ * reproduced: an event deployed with it could be issued against in this tab and
+ * never again, and the mismatch would surface later as an unexplainable
+ * "organizer does not match" on an event that is visibly this wallet's own. No
+ * deployment is attempted, and nothing is faked to work around it — the fix is a
+ * browser that can store the key (not private/incognito mode, no storage pressure).
+ */
+export class OrganizerKeyPersistenceError extends Error {
+  constructor(detail: string) {
+    super(
+      `Organizer authorization could not be secured: the key derived from the connected 1AM wallet could not be ` +
+        `saved to this wallet's private state (${detail}). That key cannot be regenerated later — the 1AM wallet's ` +
+        `signature is not reproducible — so no event was deployed, because an event deployed now could never be ` +
+        `issued against again. Allow site storage for this app (and avoid private/incognito windows), then retry.`,
+    );
+    this.name = 'OrganizerKeyPersistenceError';
   }
 }
 

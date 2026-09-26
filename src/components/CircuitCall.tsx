@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  OrganizerKeyPersistenceError,
   OrganizerUnverifiedError,
   OrganizerVerificationError,
   ZKEventAccessAPI,
@@ -356,23 +357,28 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           'Approve the deployment in the connected 1AM wallet. Waiting for on-chain inclusion, then verifying ' +
           'this wallet is the registered organizer…',
       );
-      const deployed = await ZKEventAccessAPI.deployNew(bundle.providers, undefined, (address) => {
-        // The deployment is finalized on-chain, so the address is a real fact —
-        // but it is NOT verified yet and must not be treated as active.
-        console.log('[deploy] recorded unverified new event:', address);
-        recordUnverifiedDeployment(address);
-        setActiveAddress(undefined);
-        setApi(undefined);
-        setLedger(undefined);
-      });
+      const { api: deployed, organizerCommitment: expectedOrganizer } = await ZKEventAccessAPI.deployNew(
+        bundle.providers,
+        undefined,
+        (address) => {
+          // The deployment is finalized on-chain, so the address is a real fact —
+          // but it is NOT verified yet and must not be treated as active.
+          console.log('[deploy] recorded unverified new event:', address);
+          recordUnverifiedDeployment(address);
+          setActiveAddress(undefined);
+          setApi(undefined);
+          setLedger(undefined);
+        },
+      );
       const newAddress = String(deployed.contractAddress);
 
-      // Independent confirmation of the very same comparison deployNew made,
-      // straight from the indexer, before anything is written as `verified`.
-      const [expectedOrganizer, onChainState] = await Promise.all([
-        ZKEventAccessAPI.currentOrganizerCommitment(bundle.providers),
-        deployed.readLatest(),
-      ]);
+      // Independent confirmation, straight from the indexer, before anything is
+      // written as `verified`. The expectation is the very commitment the
+      // constructor was run with for THIS deployment — deliberately not a second
+      // resolution of the wallet identity, which could differ because the 1AM
+      // wallet's signData is non-deterministic and would report a mismatch for a
+      // correct deployment.
+      const onChainState = await deployed.readLatest();
       console.log('[deploy] on-chain organizer commitment:', onChainState.organizer);
       console.log('[deploy] connected wallet commitment:   ', expectedOrganizer);
       if (expectedOrganizer.toLowerCase() !== onChainState.organizer.toLowerCase()) {
@@ -408,7 +414,9 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       const rejected = /rejected|denied|user declined|abort|cancel/i.test(raw);
       setMessage(
         (note ? `${note} ` : '') +
-          (err instanceof OrganizerVerificationError || err instanceof OrganizerUnverifiedError
+          (err instanceof OrganizerVerificationError ||
+          err instanceof OrganizerUnverifiedError ||
+          err instanceof OrganizerKeyPersistenceError
             ? raw
             : rejected
               ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy a new wallet-backed event" to try again when ready.`

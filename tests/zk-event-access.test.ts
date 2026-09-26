@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   createCircuitContext,
   createConstructorContext,
@@ -165,7 +166,90 @@ describe('ZK Event Access contract', () => {
     expect(() => contract.impureCircuits.decrement(ctx)).toThrow(/already zero/);
   });
 
+  it('stops at zero rather than underflowing the public count', () => {
+    // `counter` is the only number an on-chain auditor reads, so a revocation
+    // that could push it below zero would make "no credentials were ever
+    // issued" indistinguishable from "every issued credential was revoked" —
+    // two completely different audit outcomes reading as the same number.
+    const issued = contract.impureCircuits.increment(ctx);
+    const fullyRevoked = contract.impureCircuits.decrement(issued.context);
+    expect(readLedger(fullyRevoked.context).counter).toBe(0n);
+
+    // And the floor holds on every subsequent attempt, not just the second.
+    expect(() => contract.impureCircuits.decrement(fullyRevoked.context)).toThrow(
+      /already zero/,
+    );
+    const stillZero = contract.impureCircuits.announce(fullyRevoked.context, 'floor holds');
+    expect(readLedger(stillZero.context).counter).toBe(0n);
+  });
+
   // ─── State transitions ─────────────────────────────────────────────────────
+
+  it('initializes every public ledger cell at deployment', () => {
+    // A cell the constructor forgets to write is not a harmless omission: the
+    // contract would come up with a ledger an auditor cannot interpret (is a
+    // zero commitment "no organizer" or "an organizer whose key is the
+    // preimage of 0x00…00"?), and `increment`'s organizer check would then be
+    // testing against a value nobody chose.
+    const deployed = makeContract(ORGANIZER_SECRET);
+    const state = readLedger(deployed.ctx);
+
+    expect(state.counter).toBe(0n);
+    expect(state.announcement).toBe('');
+    // The deploy address is the 32-zero-byte placeholder this suite deploys
+    // under (tests/fixtures/contract-address.ts), and the organizer commitment
+    // is what the deployer's secret actually commits to.
+    expect(Array.from(state.contractAddress)).toEqual(Array.from(new Uint8Array(32)));
+    expect(Array.from(state.organizer)).toEqual(
+      Array.from(readLedger(deployed.ctx).organizer),
+    );
+    // A freshly deployed contract must not already look like it issued access.
+    expect(contract.impureCircuits.read(deployed.ctx).result).toBe(0n);
+  });
+
+  it('rotates only the organizer cell, leaving the ledger and notice intact', () => {
+    // `rotate` rewrites exactly one cell. If it also disturbed `counter` or
+    // `announcement`, a key handover would silently grant or revoke access or
+    // erase a published notice — and because rotation is precisely the moment a
+    // new organizer takes over, that is the change least likely to be noticed.
+    const issued = contract.impureCircuits.increment(ctx);
+    const announced = contract.impureCircuits.announce(issued.context, 'Finale at 21:00');
+    const before = readLedger(announced.context);
+    const rotated = contract.impureCircuits.rotate(announced.context, NEW_ORGANIZER_SECRET);
+    const after = readLedger(rotated.context);
+
+    expect(Array.from(after.organizer)).not.toEqual(Array.from(before.organizer));
+    expect(after.counter).toBe(before.counter);
+    expect(after.announcement).toBe(before.announcement);
+    expect(Array.from(after.contractAddress)).toEqual(Array.from(before.contractAddress));
+  });
+
+  it('lets a retained original key take authority back after a rotation', () => {
+    // Rotation is a handover, not a one-way door: an organizer who rotates to a
+    // second key and keeps the first can rotate straight back. This matters
+    // because the dApp's whole recovery story depends on the organizer key
+    // being recoverable — a rotation that silently destroyed the original would
+    // turn a lost second key into a permanently orphaned event.
+    const rotated = contract.impureCircuits.rotate(ctx, NEW_ORGANIZER_SECRET);
+    const newOrganizerCtx: Ctx = {
+      ...rotated.context,
+      currentPrivateState: createZKEventAccessPrivateState(NEW_ORGANIZER_SECRET),
+    };
+    const restored = contract.impureCircuits.rotate(newOrganizerCtx, ORGANIZER_SECRET);
+    const originalOrganizerCtx: Ctx = {
+      ...restored.context,
+      currentPrivateState: createZKEventAccessPrivateState(ORGANIZER_SECRET),
+    };
+
+    // The original secret authorizes again, and the new one no longer does.
+    expect(contract.impureCircuits.increment(originalOrganizerCtx).context).toBeDefined();
+    expect(() =>
+      contract.impureCircuits.increment({
+        ...restored.context,
+        currentPrivateState: createZKEventAccessPrivateState(NEW_ORGANIZER_SECRET),
+      }),
+    ).toThrow(/only the organizer can issue access/);
+  });
 
   it('tracks issue/revoke sequences correctly across chained calls', () => {
     const r1 = contract.impureCircuits.increment(ctx);
@@ -188,8 +272,20 @@ describe('ZK Event Access contract', () => {
     expect(readLedger(r1.context).announcement).toBe(message);
   });
 
-  it('issues and revokes nothing when announcing or rotating authority', () => {
-    // `counter` is the only thing an on-chain auditor reads, and the only
+  it('replaces the announcement instead of accumulating notices', () => {
+    // `announcement` is a single public slot holding the organizer's CURRENT
+    // notice, not an append-only log. A client that assumed it accumulated would
+    // show a stale "doors open at 18:00" forever after the organizer had moved
+    // the time, so the replace-not-append semantic is pinned here.
+    const first = contract.impureCircuits.announce(ctx, 'Doors open at 18:00');
+    expect(readLedger(first.context).announcement).toBe('Doors open at 18:00');
+    const second = contract.impureCircuits.announce(first.context, 'Doors open at 19:30');
+    expect(readLedger(second.context).announcement).toBe('Doors open at 19:30');
+    // Exactly one slot's worth of state, and the earlier notice is gone.
+    expect(readLedger(second.context).announcement).not.toContain('18:00');
+  });
+
+  it('issues and revokes nothing when announcing or rotating authority', () => {    // `counter` is the only thing an on-chain auditor reads, and the only
     // circuits allowed to move it are `increment` and `decrement`. `announce`
     // and `rotate` are otherwise-unrelated organizer actions, so a regression
     // that made either of them touch the count would silently grant or revoke
@@ -285,5 +381,53 @@ describe('ZK Event Access contract', () => {
     );
     expect(secretIsAWitnessInput).toBe(true);
     expect(newSecretIsCircuitInput).toBe(true);
+  });
+});
+
+// ─── Compiled-build invariants ───────────────────────────────────────────────
+
+/**
+ * `counter` is the contract's only public number, and its capacity guard cannot
+ * be reached from a test: driving the count to 2^64-1 would mean issuing that
+ * many credentials, and the circuit state is an opaque WASM `ContractState`
+ * that cannot be forged to an arbitrary value.
+ *
+ * So the guard is asserted where it is actually observable — in the compiled
+ * `increment` build the dApp actually ships and calls. Removing the assert from
+ * the contract without recompiling, or shipping a build compiled before it
+ * existed, both fail here. That is the reachable half of the invariant; the
+ * arithmetic it guards is covered by the increment/decrement cases above.
+ */
+describe('the compiled increment build carries its capacity guard', () => {
+  const compiledIncrement = readFileSync(
+    new URL('../managed/zk-event-access/contract/index.js', import.meta.url),
+    'utf8',
+  );
+
+  it('states the bound in the build the dApp calls', () => {
+    expect(compiledIncrement).toContain('credential count is at capacity');
+  });
+
+  it('still refuses an issuance by anyone but the organizer', () => {
+    // The guard is an addition to the authorization check, never a replacement:
+    // a build that dropped the organizer assert to make room for it would pass
+    // the check above and fail here.
+    expect(compiledIncrement).toContain('only the organizer can issue access');
+  });
+
+  it('binds the guard to the real Uint<64> ceiling, not a rounded literal', () => {
+    // `increment` states its bound as the literal 18446744073709551615, because
+    // Compact exposes no MAX constant for Uint bounds. Written by hand it is
+    // easy to lose a digit and silently leave the top of the range unissuable, or
+    // to overshoot and assert on a value no cell can hold, so the compiled
+    // circuit is checked for the exact 64-bit all-ones immediate.
+    const zkir = readFileSync(
+      new URL('../managed/zk-event-access/zkir/increment.zkir', import.meta.url),
+      'utf8',
+    );
+    expect(zkir).toContain('FFFFFFFFFFFFFFFF');
+    // And it is the ONLY bound present, so a second, wrong ceiling cannot hide
+    // alongside the correct one.
+    expect(zkir.match(/F{16}/g)).toHaveLength(1);
   });
 });

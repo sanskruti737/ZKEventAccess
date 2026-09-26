@@ -4,7 +4,7 @@ import CompactStandardLibrary;
 
 /*
  * ============================================================================
- *  ZKEventAccess — zk-event-access.compact
+ *  ZK Event Access — zk-event-access.compact
  * ============================================================================
  *
  *  A privacy-preserving event access ledger. An organizer issues and revokes
@@ -74,9 +74,28 @@ constructor() {
 
 // Issue one access credential. Only the organizer can do this: the ZK proof
 // attests that their secret key hashes to the stored commitment.
+//
+// The capacity bound is asserted EXPLICITLY rather than left to the
+// `as Uint<64>` cast to catch. `counter` is the only thing an on-chain auditor
+// reads, so saturating it is not a cosmetic failure: the cast rejects the
+// overflowing sum on its own, but it reports it as an internal compiler error
+// ("cast from Field or Uint value to smaller Uint value failed") that names no
+// circuit, no bound and no remedy. Asserting the representable maximum first
+// turns the same rejection into a deliberate, self-describing refusal, so the
+// ledger's one public number can never be driven past its own type by a
+// circuit-level mistake.
+//
+// `decrement` gets the mirror-image guard for the same reason: `counter` is
+// already asserted to be strictly positive before the subtraction, so a
+// revocation can never underflow the public count back into a state that would
+// read as "no credentials were ever issued".
 export circuit increment(): [] {
   const sk = organizerSecret();
   assert(organizer == publicKey(sk), "only the organizer can issue access");
+  // 2^64 - 1: the largest value a Uint<64> cell can represent, written out
+  // because Compact has no MAX constant for Uint bounds.
+  const maxCount: Uint<64> = 18446744073709551615;
+  assert(counter != maxCount, "credential count is at capacity: no further credential can be issued");
   const one: Uint<64> = 1;
   counter = (counter + one) as Uint<64>;
 }
@@ -94,6 +113,14 @@ export circuit decrement(): [] {
 // Publish a public announcement. DELIBERATE disclosure: the message argument
 // is private-by-default like any circuit input, but here the caller's intent
 // is publication, so it is explicitly wrapped in disclose() before storage.
+//
+// KNOWN LIMITATION (deliberate, not an oversight): `announcement` is an
+// `Opaque<"string">` and this contract cannot bound its length. Compact 0.31.1
+// exposes neither `.length` on an opaque type nor a fixed-capacity `String<N>`
+// type ("unbound identifier String"), so there is no in-circuit way to reject an
+// over-long message. The value is therefore bounded only by the organizer
+// calling it, which is the one party already trusted to write every other cell
+// in this contract. `announce` is not reachable by anyone else.
 export circuit announce(message: Opaque<"string">): [] {
   const sk = organizerSecret();
   assert(organizer == publicKey(sk), "only the organizer can announce");

@@ -1,5 +1,12 @@
 import * as ZKEventAccess from '../../managed/zk-event-access/contract/index.js';
-import { CompactTypeBytes, CompactTypeVector, persistentHash } from '@midnight-ntwrk/compact-runtime';
+import {
+  CompactTypeBytes,
+  CompactTypeVector,
+  createCircuitContext,
+  createConstructorContext,
+  dummyContractAddress,
+  persistentHash,
+} from '@midnight-ntwrk/compact-runtime';
 import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 import type { ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compact-runtime';
 import {
@@ -8,10 +15,11 @@ import {
   type FoundContract,
 } from '@midnight-ntwrk/midnight-js-contracts';
 import { combineLatest, firstValueFrom, from, map, type Observable } from 'rxjs';
-import { fromHex, toHex } from '@midnight-ntwrk/midnight-js-utils';
+import { toHex } from '@midnight-ntwrk/midnight-js-utils';
 import type { MidnightProviders } from '@midnight-ntwrk/midnight-js-types';
 import { witnesses, type ZKEventAccessPrivateState } from '../witnesses.js';
 import type { Logger } from './logger';
+import { FOREIGN_ORGANIZER_HEADLINE } from './active-event';
 
 export const ZK_EVENT_ACCESS_PRIVATE_STATE_ID = 'counterPrivateState';
 
@@ -65,6 +73,49 @@ const ORGANIZER_DOMAIN = new Uint8Array([
 ]);
 
 /**
+ * The value the contract writes into its `contractAddress` ledger cell at
+ * construction time: `disclose(kernel.self().bytes)`.
+ *
+ * A contract's own address DOES NOT EXIST while its constructor runs. The
+ * generated contract builds its constructor context with
+ * `createCircuitContext(dummyContractAddress(), ...)`, and the deploy tx is then
+ * built from the FINISHED initial state:
+ *
+ *   const contractDeploy = new ContractDeploy(toLedgerContractState(contractState));
+ *   // ledger-v8: "Creates a deployment for an arbitrary contract state.
+ *   //              The deployment and its address are randomised."
+ *
+ * so the (randomised) address is generated only AFTER the constructor has run.
+ * `kernel.self().bytes` is therefore always `dummyContractAddress()`, which is 32
+ * zero bytes — never the address the event ends up at.
+ *
+ * This is what the previous organizer bug was: hashing the deployed address in
+ * this position produced a value that can never equal the ledger's `organizer`,
+ * so the post-deploy check reported a mismatch for every event, forever.
+ *
+ * ── Documented reliance on zero-address padding ──────────────────────────────
+ *
+ * In `@midnight-ntwrk/onchain-runtime-v3@3.0.0`, `dummyContractAddress()` is a
+ * 64-character hex STRING ("0000…0000"), not a `Uint8Array`. The `as unknown as
+ * Uint8Array` cast above is therefore a lie at runtime: `new Uint8Array(<string>)`
+ * goes through the TypedArray numeric conversion and yields a ZERO-LENGTH array,
+ * not 32 zero bytes.
+ *
+ * That is harmless ONLY because the element is hashed inside
+ * `persistentHash<Vector<3, Bytes<32>>>`, whose `CompactTypeBytes(32)` element
+ * type pads it back to 32 zero bytes — byte-for-byte what the contract's
+ * constructor hashed. So this constant is the zero address, is never a deployed
+ * address, and the commitment it produces is correct.
+ *
+ * It is exported, and its exact behaviour is pinned by the regression tests in
+ * tests/organizer-commitment.test.ts ("CONSTRUCTION_ADDRESS_PLACEHOLDER"), so a
+ * future SDK that stopped padding — or that returned a non-zero dummy address —
+ * fails there loudly instead of silently producing an unverifiable commitment.
+ */
+export const CONSTRUCTION_ADDRESS_PLACEHOLDER = new Uint8Array(dummyContractAddress() as unknown as Uint8Array);
+
+
+/**
  * Off-chain mirror of the contract's `publicKey` circuit.
  *
  * MUST stay byte-for-byte equivalent to `contracts/zk-event-access.compact`:
@@ -74,22 +125,80 @@ const ORGANIZER_DOMAIN = new Uint8Array([
  *       [pad(32, "zkEventAccess:organizer"), contractAddress, sk]);
  *   }
  *
- * The commitment is bound to BOTH the domain separator AND the deploying
- * contract's own address. Omitting `contractAddress` (or hashing it as a
- * `Vector<2>`) produces a value that can never equal the ledger's `organizer`,
- * which made the pre-flight organizer check report a false mismatch for every
- * event and made post-deploy verification fail unconditionally.
+ * where `contractAddress` is the LEDGER value written by the constructor, i.e.
+ * {@link CONSTRUCTION_ADDRESS_PLACEHOLDER}. Substituting the real deployed
+ * address here (or dropping the element to a `Vector<2>`) yields a value that
+ * can never equal the ledger's `organizer`.
  */
-export const organizerCommitment = (secretKey: Uint8Array, contractAddress: string): string =>
+export const organizerCommitment = (secretKey: Uint8Array): string =>
   toHex(
     new Uint8Array(
       persistentHash(new CompactTypeVector(3, new CompactTypeBytes(32)), [
         ORGANIZER_DOMAIN,
-        fromHex(contractAddress),
+        CONSTRUCTION_ADDRESS_PLACEHOLDER,
         secretKey,
       ]),
     ),
   );
+
+/**
+ * The organizer commitment the contract's OWN constructor puts on-chain for a
+ * given organizer secret key — derived by EXECUTING the compiled contract
+ * (`managed/zk-event-access/contract/index.js`), not by re-implementing the
+ * formula here.
+ *
+ * This is the single source of truth for "what would this wallet's key produce
+ * on-chain". The TypeScript mirror {@link organizerCommitment} above is only a
+ * human-readable restatement of that formula and is pinned to this function by
+ * the tests in tests/organizer-commitment.test.ts, so the two can never drift
+ * apart silently.
+ *
+ * Why this exists: the mirror is a hand-written copy of
+ *
+ *   circuit publicKey(sk: Bytes<32>): Bytes<32> {
+ *     return persistentHash<Vector<3, Bytes<32>>>(
+ *       [pad(32, "zkEventAccess:organizer"), contractAddress, sk]);
+ *   }
+ *
+ * and every historical copy of it in this repository's history disagreed with
+ * the compiled contract — one omitted the address element entirely
+ * (`Vector<2>`), the next hashed the REAL DEPLOYED ADDRESS where the contract
+ * hashes the value the constructor wrote into its own `contractAddress` cell
+ * (32 zero bytes, because a contract has no address while its constructor runs).
+ * Each of those produced a post-deployment "organizer does not match" failure
+ * for every event, forever, with no way to recover it. Deriving the expectation
+ * from the artifact removes that entire class of bug: the value compared against
+ * the chain is now produced by the same code the chain's constructor runs.
+ *
+ * The constructor context is built with a fixed zero address and zero coin
+ * public key rather than the wallet's. That is deliberate and not a shortcut:
+ * the compiler resolves `kernel.self().bytes` to 32 zero bytes (see the
+ * generated `new Uint8Array(32)` in managed/zk-event-access/contract/index.js),
+ * and the `organizer` cell is `publicKey(sk)`, which hashes only the domain,
+ * that cell, and `sk`. So neither the circuit-context address nor the coin
+ * public key can change the result — pinned by "does not depend on the coin
+ * public key" and "is independent of the circuit context address" in
+ * tests/organizer-commitment.test.ts. Using fixed values also keeps
+ * verification independent of wallet-reported key formats.
+ */
+export const constructorOrganizerCommitment = (secretKey: Uint8Array): string => {
+  const contract = new ZKEventAccess.Contract<
+    ZKEventAccessPrivateState,
+    ZKEventAccess.Witnesses<ZKEventAccessPrivateState>
+  >(witnesses);
+  // 32 zero bytes, as the hex string `createConstructorContext` accepts. The
+  // constructor's organizer cell does not depend on it (pinned by tests).
+  const initial = contract.initialState(
+    createConstructorContext({ organizerSecretKey: secretKey }, '00'.repeat(32)),
+  );
+  const context = createCircuitContext(
+    dummyContractAddress() as unknown as ContractAddress,
+    initial.currentZswapLocalState,
+    initial.currentContractState,
+    initial.currentPrivateState,
+  );
+  return toHex(ZKEventAccess.ledger(context.currentQueryContext.state).organizer);
+};
 
 const DEPLOY_TIMEOUT_MS = 5 * 60_000;
 const DEPLOY_STATE_READ_TIMEOUT_MS = 60_000;
@@ -246,11 +355,7 @@ export class ZKEventAccessAPI {
    * the call and the error is surfaced truthfully.
    */
   async increment(): Promise<void> {
-    const sk = await resolveOrDeriveOrganizerSecretKey(this.providers);
-    console.log(
-      '[debug] wallet-derived organizer commitment for this event:',
-      organizerCommitment(sk, String(this.contractAddress)),
-    );
+    await resolveOrDeriveOrganizerSecretKey(this.providers);
     this.logger?.info('increment: proving locally...');
     const txData = await this.deployed.callTx.increment();
     this.logger?.info({ txHash: txData.public.txHash }, 'increment finalized');
@@ -272,9 +377,9 @@ export class ZKEventAccessAPI {
    * persisted/saved event is actually owned by the currently connected 1AM
    * wallet before reusing it.
    */
-  static async currentOrganizerCommitment(providers: ZKEventAccessProviders, contractAddress: string): Promise<string> {
+  static async currentOrganizerCommitment(providers: ZKEventAccessProviders): Promise<string> {
     const sk = await resolveOrDeriveOrganizerSecretKey(providers);
-    return organizerCommitment(sk, contractAddress);
+    return constructorOrganizerCommitment(sk);
   }
 
   /**
@@ -322,6 +427,20 @@ export class ZKEventAccessAPI {
   }
 
   /**
+   * Outcome of comparing an event's on-chain `organizer` cell with the connected
+   * wallet's derived identity, using the SAME canonical formula on both sides
+   * (see {@link organizerCommitment}).
+   */
+  static async verifyOrganizer(
+    api: ZKEventAccessAPI,
+    providers: ZKEventAccessProviders,
+  ): Promise<{ readonly address: string; readonly onChain: string; readonly expected: string; readonly verified: boolean }> {
+    const address = String(api.contractAddress);
+    const [{ organizer }, expected] = await Promise.all([api.readLatest(), this.currentOrganizerCommitment(providers)]);
+    return { address, onChain: organizer, expected, verified: organizer.toLowerCase() === expected.toLowerCase() };
+  }
+
+  /**
    * Deploys a NEW event instance whose organizer identity is owned by the
    * connected 1AM wallet. The organizer key is derived from the wallet (never
    * generated at random), persisted in the wallet-scoped private state provider
@@ -330,15 +449,22 @@ export class ZKEventAccessAPI {
    * the private state provider and can issue credentials without any secret
    * leaving the wallet's key material.
    *
-   * After deployment this reads the NEW contract's on-chain state from the
-   * indexer and verifies that its registered organizer commitment equals this
-   * wallet's derived identity. Only then does it treat the deployment as
-   * successful; otherwise it throws and leaves the active event untouched.
+   * The returned API is ONLY safe to activate after
+   * {@link ZKEventAccessAPI.verifyOrganizer} has confirmed the on-chain
+   * `organizer` cell equals this wallet's derived identity. `onDeploymentFinalized`
+   * fires as soon as the deploy transaction is on-chain, so the caller can
+   * remember the address (and never lose it) — but remembering it is NOT
+   * activation, and the caller must record it as unverified until the
+   * comparison below succeeds.
+   *
+   * On a verification failure this throws an {@link OrganizerVerificationError}
+   * carrying BOTH values, and never asks for another deployment: the caller
+   * shows the exact mismatch and stops.
    */
   static async deployNew(
     providers: ZKEventAccessProviders,
     logger?: Logger,
-    onDeployedAddress?: (address: string) => void,
+    onDeploymentFinalized?: (address: string) => void,
   ): Promise<ZKEventAccessAPI> {
     logger?.info('deploying new ZK Event Access contract instance');
     const organizerSecretKey = await resolveOrDeriveOrganizerSecretKey(providers);
@@ -355,47 +481,89 @@ export class ZKEventAccessAPI {
         `and that the wallet has preprod coins for the deployment fee, then retry.`,
     );
     const deployedAddress = String(deployed.deployTxData.public.contractAddress);
-    // The constructor binds `organizer` to persistentHash(domain || contractAddress || sk),
-    // and `contractAddress` is the address the contract was just deployed to. The
-    // expected commitment is therefore only computable now that the real address
-    // is known — computing it beforehand (or without the address) yields a value
-    // that can never match the ledger.
-    const expectedOrganizer = organizerCommitment(organizerSecretKey, deployedAddress);
-    console.log('[debug] newly deployed contract address:', deployedAddress);
-    console.log('[debug] wallet-derived organizer commitment registered on-chain:', expectedOrganizer);
+    // Expected value comes from executing the compiled contract's own
+    // constructor with the very key this deploy was built from, so it cannot
+    // disagree with the on-chain `organizer` cell the way a hand-copied formula
+    // can.
+    const expectedOrganizer = constructorOrganizerCommitment(organizerSecretKey);
+    console.log('[deploy] wallet-derived organizer commitment:', expectedOrganizer);
     // The deployment transaction is finalized on-chain at this point, so the
-    // real address is a fact — publish it immediately so the caller can persist
-    // it even if the verification read below times out on a lagging indexer.
-    onDeployedAddress?.(deployedAddress);
-    console.log('[debug] waiting to verify on-chain organizer of the new event...');
+    // real address is a fact — publish it immediately so the caller can record
+    // it as UNVERIFIED even if the verification read below times out on a
+    // lagging indexer. This callback must never be treated as "activated".
+    onDeploymentFinalized?.(deployedAddress);
+    console.log('[deploy] new event on-chain:', deployedAddress, '— reading its organizer for verification...');
 
     const api = new ZKEventAccessAPI(deployed, providers, logger);
-    let organizer: string;
+    let onChainOrganizer: string;
     try {
-      ({ organizer } = await withTimeout(
+      ({ organizer: onChainOrganizer } = await withTimeout(
         firstValueFrom(api.state$),
         DEPLOY_STATE_READ_TIMEOUT_MS,
-        `The new event (${deployedAddress}) was registered on-chain, but its state could not be read from the ` +
-          `indexer within ${DEPLOY_STATE_READ_TIMEOUT_MS / 60000} minute(s).`,
+        `The new event (${deployedAddress}) is on-chain, but its state could not be read from the indexer within ` +
+          `${DEPLOY_STATE_READ_TIMEOUT_MS / 1000} seconds, so its organizer could not be verified.`,
       ));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `${message} The new event DID deploy and its address is now active and remembered, but the on-chain ` +
-          `organizer could not be verified yet (indexer lag). Click "Issue credential (+1)" to retry — the local ` +
-          `organizer assert will still reject a non-owner wallet.`,
-      );
+      // The error states the "not activated" consequence itself; this call site
+      // only supplies what went wrong.
+      throw new OrganizerUnverifiedError(deployedAddress, expectedOrganizer, undefined, message);
     }
 
-    if (organizer !== expectedOrganizer) {
-      throw new Error(
-        'Deployment verification failed: the new event was created but its on-chain organizer ' +
-          `(commitment ${organizer}) does not match the connected 1AM wallet's identity ` +
-          `(${expectedOrganizer}). The active event was NOT switched, so nothing was replaced or clobbered.`,
-      );
+    if (onChainOrganizer.toLowerCase() !== expectedOrganizer.toLowerCase()) {
+      throw new OrganizerVerificationError(deployedAddress, onChainOrganizer, expectedOrganizer);
     }
-    console.log('[debug] on-chain organizer of new event verified:', organizer);
-    logger?.info({ deployedAddress, organizer }, 'deploy verified: connected 1AM wallet is the on-chain organizer');
+    console.log('[deploy] organizer verified on-chain:', onChainOrganizer);
+    logger?.info({ deployedAddress, organizer: onChainOrganizer }, 'deploy verified: connected 1AM wallet is the on-chain organizer');
     return api;
   }
 }
+
+/**
+ * The new event is on-chain, but its organizer has not been proven to be the
+ * connected wallet. The event is NOT active and nothing may be issued on it.
+ *
+ * The "not activated" consequence is stated here, in the error itself, rather
+ * than left to each call site: this error is the only signal a caller gets that
+ * a finalized deployment did NOT become the active event, so a bare cause
+ * message (an indexer read timeout, for instance) must never be shown on its
+ * own — it would read as "deployed, but something minor went wrong" and invite a
+ * retry against an event that cannot issue.
+ */
+export class OrganizerUnverifiedError extends Error {
+  constructor(
+    readonly address: string,
+    readonly expected: string,
+    readonly onChain: string | undefined,
+    detail: string,
+  ) {
+    super(
+      `${detail} The event ${address} is on-chain but is NOT active: it was not activated because its ` +
+        `on-chain organizer could not be read back and matched against the connected 1AM wallet ` +
+        `(expected organizer commitment ${expected}), so nothing can be issued on it. Click "Deploy a new ` +
+        `wallet-backed event" to deploy and verify one.`,
+    );
+    this.name = 'OrganizerUnverifiedError';
+  }
+}
+
+/**
+ * The new event is on-chain but its organizer commitment does not match the
+ * connected 1AM wallet. Both values are carried so the UI can show the exact
+ * mismatch instead of a generic failure.
+ */
+export class OrganizerVerificationError extends Error {
+  constructor(
+    readonly address: string,
+    readonly onChain: string,
+    readonly expected: string,
+  ) {
+    super(
+      `Deployment verification failed: the new event ${address} was created on-chain, but its organizer ` +
+        `commitment ${onChain} does not match the connected 1AM wallet's identity ${expected}. ` +
+        `${FOREIGN_ORGANIZER_HEADLINE} Nothing was issued and the event was NOT activated.`,
+    );
+    this.name = 'OrganizerVerificationError';
+  }
+}
+

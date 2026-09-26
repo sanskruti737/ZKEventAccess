@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   createCircuitContext,
   createConstructorContext,
-  sampleContractAddress,
   type CircuitContext,
 } from '@midnight-ntwrk/compact-runtime';
 import { Contract, ledger, type Ledger } from '../managed/zk-event-access/contract/index.js';
@@ -11,6 +10,7 @@ import {
   createZKEventAccessPrivateState,
   type ZKEventAccessPrivateState,
 } from '../src/witnesses.js';
+import { CIRCUIT_CONTEXT_ADDRESS } from './fixtures/contract-address.js';
 
 // Deterministic test keys (32 bytes each, as required by Bytes<32>).
 const ORGANIZER_SECRET = new Uint8Array(32).fill(7);
@@ -19,17 +19,22 @@ const IMPOSTOR_SECRET = new Uint8Array(32).fill(9);
 
 type Ctx = CircuitContext<ZKEventAccessPrivateState>;
 
-/** Deploy the contract in a local simulator and return it with a fresh circuit context. */
+/**
+ * Deploy the contract in a local simulator and return it with a fresh circuit context.
+ *
+ * The circuit-context address is the shared deterministic fixture rather than
+ * `sampleContractAddress()`, which panics with `RuntimeError: unreachable` in this
+ * Vitest/WASM environment — see tests/fixtures/contract-address.ts.
+ */
 function makeContract(secret: Uint8Array): { contract: Contract<ZKEventAccessPrivateState>; ctx: Ctx } {
   const contract = new Contract<ZKEventAccessPrivateState>(witnesses);
-  const address = sampleContractAddress();
   const init = contract.initialState(
     createConstructorContext(createZKEventAccessPrivateState(secret), {
       bytes: new Uint8Array(32),
     }),
   );
   const ctx = createCircuitContext(
-    address,
+    CIRCUIT_CONTEXT_ADDRESS,
     init.currentZswapLocalState,
     init.currentContractState,
     init.currentPrivateState,

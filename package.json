@@ -2,7 +2,7 @@
   "name": "zkeventaccess",
   "version": "0.1.0",
   "type": "module",
-  "description": "ZKEventAccess - a Midnight (Compact) smart contract for privacy-preserving event access credential counting",
+  "description": "ZK Event Access - a Midnight (Compact) smart contract for privacy-preserving event access credential counting",
   "license": "MIT",
   "scripts": {
     "compile": "compact compile contracts/zk-event-access.compact managed/zk-event-access",
@@ -13,6 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "export:users": "node scripts/export-users-sheet.mjs",
+    "check:users": "node scripts/export-users-sheet.mjs --check",
+    "verify:users-sheet": "node scripts/verify-users-sheet.mjs",
     "deploy": "tsx src/deploy/deploy-zk-event-access.ts",
     "network": "tsx src/deploy/network.ts",
     "check-balance": "tsx src/deploy/check-balance.ts"
@@ -58,4 +61,3 @@
     "node": ">=22.0.0"
   }
 }
-

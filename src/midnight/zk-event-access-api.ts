@@ -456,15 +456,6 @@ export class ZKEventAccessAPI {
   }
 
   /**
-   * Reads the credential count through an on-chain circuit call.
-   * The fresh value arrives via `state$` once the transaction is finalized.
-   */
-  async read(): Promise<void> {
-    this.logger?.info('read: proving locally...');
-    await this.deployed.callTx.read();
-  }
-
-  /**
    * Returns the organizer commitment the connected wallet would register if it
    * deployed an event. Resolved through {@link resolveOrganizerIdentity}, so it is
    * the same identity the deploy flow uses — never a second, independent derivation
@@ -494,25 +485,32 @@ export class ZKEventAccessAPI {
 
   /**
    * Joins the preprod contract. The private state provider holds this wallet's
-   * organizer secret key (persisted across sessions, scoped to this wallet). A
-   * non-organizer wallet joins with a read-only placeholder private state
-   * (never used as organizer authority). `initialPrivateState` only becomes the
-   * placeholder when no genuine organizer key is persisted, so a persisted
-   * organizer key is never clobbered by `findDeployedContract`.
+   * organizer secret key (persisted across sessions, scoped to this wallet).
+   *
+   * The join deliberately passes `privateStateId` WITHOUT `initialPrivateState`,
+   * which is the SDK's non-destructive form: `findDeployedContract` then READS
+   * the state already stored under that id and fails with a clear error if there
+   * is none. Passing `initialPrivateState` would instead WRITE it — and the
+   * previous code supplied `new Uint8Array(32)` whenever the key could not be
+   * read at that instant, permanently overwriting the wallet's real organizer
+   * key with 32 zero bytes. `signData` is non-deterministic, so that key cannot
+   * be re-derived: the event would have been left un-issuable forever and every
+   * later identity resolution would disagree with the chain, surfacing as an
+   * unexplainable "organizer does not match" on an event that is visibly this
+   * wallet's own. A missing key is now reported, never replaced.
    */
   static async join(providers: ZKEventAccessProviders, contractAddress: ContractAddress, logger?: Logger): Promise<ZKEventAccessAPI> {
     logger?.info({ joinContract: { contractAddress } }, 'joining deployed ZK Event Access contract');
 
     const organizerSecretKey = await resolveOrganizerSecretKey(providers);
-    const initialPrivateState: ZKEventAccessPrivateState = {
-      organizerSecretKey: organizerSecretKey ?? new Uint8Array(32),
-    };
+    if (!organizerSecretKey) {
+      throw new OrganizerIdentityUnavailableError(String(contractAddress));
+    }
 
     const deployed = await findDeployedContract<ZKEventAccessContract>(providers, {
       contractAddress,
       compiledContract: CompiledZKEventAccessContract,
       privateStateId: ZK_EVENT_ACCESS_PRIVATE_STATE_ID,
-      initialPrivateState,
     });
 
     return new ZKEventAccessAPI(deployed, providers, logger);
@@ -688,6 +686,27 @@ export class OrganizerKeyPersistenceError extends Error {
         `issued against again. Allow site storage for this app (and avoid private/incognito windows), then retry.`,
     );
     this.name = 'OrganizerKeyPersistenceError';
+  }
+}
+
+/**
+ * The active event's organizer key is no longer in this wallet's private state.
+ *
+ * The key is the only durable proof of ownership and `signData` cannot reproduce
+ * it, so a join that cannot find it MUST NOT invent one: the previous code
+ * substituted 32 zero bytes and `findDeployedContract` wrote that over the real
+ * key, permanently orphaning the event. This is reported instead, so the caller
+ * can tell the truth and ask for a fresh wallet-backed deployment.
+ */
+export class OrganizerIdentityUnavailableError extends Error {
+  constructor(readonly address: string) {
+    super(
+      `This browser no longer holds the organizer key for event ${address}, so the app cannot prove it owns that ` +
+        `event. The 1AM wallet's signature is not reproducible, so the missing key cannot be recovered — it is not ` +
+        `replaced with a made-up one, because that would silently destroy it. Click "Deploy a new wallet-backed ` +
+        `event" to register a fresh event for this wallet.`,
+    );
+    this.name = 'OrganizerIdentityUnavailableError';
   }
 }
 

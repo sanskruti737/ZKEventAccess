@@ -50,6 +50,21 @@ const openDb = (): Promise<IDBDatabase> => {
   return dbPromise;
 };
 
+/**
+ * Runs one IndexedDB request inside its own transaction.
+ *
+ * `await` on `request.onsuccess` is NOT the same as the write having happened:
+ * a request can succeed and the transaction still abort afterwards (an explicit
+ * `abort()`, a quota failure detected at commit, a closed connection). Resolving
+ * on the request alone therefore reports a LOST WRITE AS A SUCCESSFUL ONE, and
+ * with the organizer secret key that is unrecoverable — the app would carry on
+ * believing an event is issuable from a key that was never stored.
+ *
+ * So a `readwrite` transaction resolves only on `tx.oncomplete` (the commit),
+ * and a `readonly` one resolves on the request, which is the only thing that
+ * carries a result. Both reject on error and on abort, and `tx.onerror` is
+ * handled so a failed transaction never leaves the caller hanging.
+ */
 const withTransaction = async <T>(
   storeName: string,
   mode: IDBTransactionMode,
@@ -57,12 +72,21 @@ const withTransaction = async <T>(
 ): Promise<T> => {
   const db = await openDb();
   return new Promise<T>((resolve, reject) => {
+    let result: T;
+    let requestSucceeded = false;
     const tx = db.transaction(storeName, mode);
+    tx.oncomplete = () => (requestSucceeded ? resolve(result) : reject(new Error('IndexedDB transaction completed without a request result')));
+    tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
+    tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
     const store = tx.objectStore(storeName);
     const request = run(store);
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => {
+      result = request.result;
+      requestSucceeded = true;
+      // A read has nothing to commit: answer as soon as the request answered.
+      if (mode === 'readonly') resolve(result);
+    };
     request.onerror = () => reject(request.error);
-    tx.onabort = () => reject(tx.error);
   });
 };
 

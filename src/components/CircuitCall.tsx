@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
+  OrganizerIdentityUnavailableError,
   OrganizerKeyPersistenceError,
   OrganizerUnverifiedError,
   OrganizerVerificationError,
@@ -8,17 +9,23 @@ import {
 } from '../midnight/zk-event-access-api';
 import { NETWORK_ID } from '../midnight/providers';
 import type { ProvidersBundle } from '../midnight/providers';
+import { watchWalletTxState, type WalletTxState, type WalletTxWatcher } from '../midnight/wallet-transactions';
 import {
+  activeEventNotPersistedMessage,
   FOREIGN_ORGANIZER_HEADLINE,
   invalidateActiveEvent,
+  isActiveEventDurable,
   isStaleContractBuildError,
+  isTransactionPendingError,
   organizerMismatchMessage,
   readActiveEventRecord,
+  readVerifiedActiveEventAddress,
   recordUnverifiedDeployment,
   recordVerifiedActiveEvent,
   requireVerifiedActiveEvent,
   staleContractBuildCircuits,
   staleContractBuildMessage,
+  transactionPendingMessage,
   type ActiveEventRecord,
 } from '../midnight/active-event';
 import {
@@ -60,7 +67,42 @@ const formatUpdatedAt = (value: Date | undefined): string => {
   return `Updated ${value.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
 };
 
-type Phase = 'idle' | 'joining' | 'proving' | 'done' | 'error';
+type Phase = 'idle' | 'joining' | 'proving' | 'done' | 'error' | 'needs-event';
+
+/**
+ * The deployment finalized, its organizer matched, but the active-event store
+ * does not return the new address. This is the one case the flow must never
+ * paper over: claiming success here is what made the app tell a wallet that
+ * owns a live on-chain event that it had "no event contract address
+ * configured" — sending it to pay for a second, duplicate deployment.
+ */
+export class ActiveEventActivationError extends Error {
+  constructor(readonly address: string) {
+    super(
+      `The new event ${address} is on-chain and its organizer was verified, but this browser could not record it ` +
+        `as the active event, so "Issue credential" and "Verify access" cannot use it. The deployment was NOT ` +
+        `wasted — the event exists and is owned by this wallet — but this app cannot remember it. Allow site ` +
+        `storage for this app (and avoid private/incognito windows or a full disk), then click "Deploy a new ` +
+        `wallet-backed event" once more.`,
+    );
+    this.name = 'ActiveEventActivationError';
+  }
+}
+
+/**
+ * The action needs a verified active event that this browser does not have.
+ *
+ * Deliberately its own type so the UI can present it as a state to move on from
+ * — with the deploy action offered — instead of as a failed action wrapped in
+ * "error: …", which is how "you have not deployed yet" reached users looking
+ * like a malfunction.
+ */
+export class NeedsActiveEventError extends Error {
+  constructor(readonly detail: string) {
+    super(detail);
+    this.name = 'NeedsActiveEventError';
+  }
+}
 
 export interface CircuitCallProps {
   readonly connected: boolean;
@@ -76,14 +118,44 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const [lastUpdated, setLastUpdated] = useState<Date | undefined>(undefined);
   const [addressCopied, setAddressCopied] = useState(false);
 
+  // The WALLET's transaction queue, which is a strictly larger window than this
+  // app's own in-flight requests: `submitTransaction` resolves when the wallet
+  // accepts a submission, not when it is included in a block. Until this is
+  // observed, Issue and Deploy stay disabled even though nothing here is
+  // awaiting a promise — which is exactly the window in which the wallet used to
+  // answer a new request with "A transaction is already pending".
+  const [walletTxState, setWalletTxState] = useState<WalletTxState>('unknown');
+  const walletTxWatcherRef = useRef<WalletTxWatcher | undefined>(undefined);
+
+  /** Re-reads the wallet queue now; awaited nowhere so it can never block an action. */
+  const refreshWalletTxState = (): Promise<WalletTxState> =>
+    walletTxWatcherRef.current?.refresh() ?? Promise.resolve(walletTxState);
+
+  // Observe the wallet's queue for as long as a wallet is connected. This is
+  // read-only: it never submits, retries or replaces a transaction, and it only
+  // polls while something is actually pending.
+  useEffect(() => {
+    if (!connected) return;
+    const connectedAPI = getBundle()?.connectedAPI;
+    if (!connectedAPI) return;
+    const watcher = watchWalletTxState(connectedAPI, setWalletTxState);
+    walletTxWatcherRef.current = watcher;
+    return () => {
+      watcher.stop();
+      walletTxWatcherRef.current = undefined;
+    };
+  }, [connected, getBundle]);
+
   // Per-action in-flight locks (duplicate-request fix). Each user action owns an
   // independent lock so that:
   //   - ONE user click (or one effect run) issues exactly ONE wallet request;
   //     a second click while the same action is pending is a harmless no-op.
-  //   - Verify access (a pure read, organizer-free) stays clickable and
-  //     functional even while an Issue request is pending — no shared `busy`
-  //     flag can disable it.
-  // The refs gate synchronous double-clicks; the `*Pending` state ONLY drives
+  //   - the locks stay per-action so a finished action releases only itself.
+  //
+  // They are NOT a substitute for the shared lock below: a transaction stays
+  // pending in the WALLET long after these promises settle, so the authoritative
+  // gate for submitting is `walletTxState`, not these flags.
+  // The refs gate synchronous double-clicks; the `*Pending` state ALSO drives
   // button disabled/styling so React re-renders the controls.
   const issueInFlightRef = useRef(false);
   const readInFlightRef = useRef(false);
@@ -197,14 +269,19 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
    * after a new deploy: the address had been switched to the fresh event but the
    * stale ZKEventAccessAPI bound to the old event was still returned, so the
    * organizer comparison ran against the WRONG contract.
+   *
+   * The store is the single source of truth for the address, so Issue credential
+   * and Verify access can never act on a different event than the one that was
+   * verified. A gate failure is a state, not a crash: it is reported as
+   * "needs an event" with the deploy action offered, not as a failed action.
    */
   const join = async (): Promise<ZKEventAccessAPI> => {
     const record = readActiveEventRecord();
     const gate = requireVerifiedActiveEvent(record);
     if (!gate.ok) {
-      setPhase('error');
+      setPhase('needs-event');
       setMessage(gate.message);
-      throw new Error(gate.message);
+      throw new NeedsActiveEventError(gate.message);
     }
     const contractAddress = activeAddress && activeAddress === gate.address ? activeAddress : gate.address;
     if (api && String(api.contractAddress) === contractAddress) return api;
@@ -267,6 +344,15 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const runCircuit = async (name: 'increment' | 'read') => {
     const inFlightRef = name === 'increment' ? issueInFlightRef : readInFlightRef;
     if (inFlightRef.current) return; // same action already in flight — ignore the duplicate click
+    // Only "Issue credential" submits. It must never start while the wallet still
+    // holds an unconfirmed transaction, and this guard is deliberately in the
+    // handler as well as on the button's `disabled`: it is the invariant that
+    // actually prevents a second submission. Nothing is submitted while waiting.
+    if (name === 'increment' && walletTxPending) {
+      setPhase('error');
+      setMessage(transactionPendingMessage());
+      return;
+    }
     inFlightRef.current = true;
     if (name === 'increment') setIssuePending(true);
     else setReadPending(true);
@@ -274,7 +360,11 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       const bundle = getBundle();
       const eventAccessApi = await join();
       setPhase('proving');
-      setMessage(`Generating ZK proof locally (${name}) — this runs in your browser…`);
+      setMessage(
+        name === 'increment'
+          ? `Generating ZK proof locally (${name}) — this runs in your browser…`
+          : 'Reading the public ledger from the indexer — no proof and no transaction.',
+      );
       if (name === 'increment') {
         // Mandatory pre-flight organizer check: read the event's registered
         // organizer commitment and compare it against the connected wallet's
@@ -294,8 +384,23 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           return;
         }
         await eventAccessApi.increment();
+        // Once a transaction has been accepted by the wallet, re-read its queue:
+        // the submission is not on-chain yet, and the UI must reflect that.
+        void refreshWalletTxState();
       } else {
-        await eventAccessApi.read();
+        // VERIFY ACCESS SUBMITS NOTHING.
+        //
+        // The contract's `read` circuit is `read(): Uint<64> { return counter; }`
+        // — no witness, no state change, returning a value that is ALREADY
+        // public ledger state. Calling it through `callTx.read()` therefore costs
+        // a full local ZK proof plus a wallet transaction to obtain a number the
+        // indexer will hand over for free, and it spends the wallet's single
+        // pending-transaction slot to do it.
+        //
+        // So this action reads the public count directly. `readLatest()` below is
+        // a plain query against the public data provider: no proof, no
+        // submission, and therefore nothing to sequence and nothing that can be
+        // rejected as "already pending".
       }
       setLedger(await eventAccessApi.readLatest());
       setLastUpdated(new Date());
@@ -311,11 +416,28 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           setMessage(err.message);
           return;
         }
+        // The action was never started: there is no verified active event to act
+        // on. That is a state to move on from, not a malfunction, so it keeps
+        // the message the gate produced instead of being re-wrapped as one.
+        if (err instanceof NeedsActiveEventError) {
+          setPhase('needs-event');
+          return;
+        }
         // A stale-build event fails here too (join() throws ContractTypeError).
         // That is not an authorization problem and not something a retry can fix.
         if (isStaleContractBuildError(err)) {
           console.warn('[stale-build] active event came from a different contract build', err);
           markEventStaleBuild(err, readActiveEventRecord()?.address ?? 'the saved event');
+          return;
+        }
+        // This browser lost the organizer key: it is unrecoverable, and it is
+        // never replaced with a made-up one.
+        if (err instanceof OrganizerIdentityUnavailableError) {
+          console.warn('[organizer-identity] no organizer key for the active event', err);
+          setApi(undefined);
+          setActiveAddress(undefined);
+          setPhase('error');
+          setMessage(err.message);
           return;
         }
         setPhase('error');
@@ -346,6 +468,15 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
    */
   const deployNewEvent = async (note?: string) => {
     if (deployInFlightRef.current) return; // duplicate deploy click — no-op
+    // A deploy submits a transaction and costs a real on-chain fee, so it must
+    // never start while the wallet still holds an unconfirmed one. Same
+    // deliberate belt-and-braces guard as "Issue credential": nothing is
+    // submitted, and no event is deployed, while the wallet is busy.
+    if (walletTxPending) {
+      setPhase('error');
+      setMessage(transactionPendingMessage());
+      return;
+    }
     deployInFlightRef.current = true;
     setDeployPending(true);
     try {
@@ -386,16 +517,30 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
       }
 
       recordVerifiedActiveEvent(newAddress, onChainState.organizer);
+
+      // CONFIRM the activation instead of assuming it. The address Issue and
+      // Verify will use is read back out of the active-event store, so the
+      // success path can never report an event the actions would refuse. This is
+      // the step that was missing: the record was written and the app declared
+      // success, so a browser that refused the write silently fell back to
+      // "No event contract address configured" for a wallet that owns a live
+      // on-chain event.
+      const activatedAddress = readVerifiedActiveEventAddress();
+      if (activatedAddress !== newAddress) {
+        throw new ActiveEventActivationError(newAddress);
+      }
+      const durable = isActiveEventDurable();
       setApi(deployed);
-      setActiveAddress(newAddress);
+      setActiveAddress(activatedAddress);
       setLedger(onChainState);
       setLastUpdated(new Date());
       setPhase('done');
       setMessage(
         (note ? `${note} ` : '') +
           `New event deployed and verified on-chain as owned by this 1AM wallet (organizer commitment read from ` +
-          `the indexer and matched: ${onChainState.organizer}). Address: ${newAddress}. It is now the active ` +
-          `event, so "Issue credential" and "Verify access" both use it.`,
+          `the indexer and matched: ${onChainState.organizer}). Address: ${activatedAddress}. It is now the active ` +
+          `event, so "Issue credential" and "Verify access" both use it.` +
+          (durable ? '' : ` ${activeEventNotPersistedMessage(activatedAddress)}`),
       );
     } catch (err) {
       const record = readActiveEventRecord();
@@ -408,15 +553,27 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
         setActiveAddress(undefined);
         setLedger(undefined);
       }
-      setPhase('error');
-      const raw = err instanceof Error ? err.message : String(err);
+        // The wallet declined this request because another transaction is still
+        // pending. Not a contract failure and not an authorization problem, and
+        // retrying into the same wall changes nothing — so it is explained
+        // rather than printed as a raw "error: …".
+        if (isTransactionPendingError(err)) {
+          console.warn('[tx-pending] the wallet refused a second concurrent transaction', err);
+          setPhase('error');
+          setMessage(transactionPendingMessage());
+          return;
+        }
+        setPhase('error');
+        const raw = err instanceof Error ? err.message : String(err);
       const noFunds = /insufficient|not enough|funds|balance|dust/i.test(raw);
       const rejected = /rejected|denied|user declined|abort|cancel/i.test(raw);
       setMessage(
         (note ? `${note} ` : '') +
           (err instanceof OrganizerVerificationError ||
           err instanceof OrganizerUnverifiedError ||
-          err instanceof OrganizerKeyPersistenceError
+          err instanceof OrganizerKeyPersistenceError ||
+          err instanceof OrganizerIdentityUnavailableError ||
+          err instanceof ActiveEventActivationError
             ? raw
             : rejected
               ? `Deployment was not approved in the 1AM wallet (${raw}). Click "Deploy a new wallet-backed event" to try again when ready.`
@@ -427,14 +584,27 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
     } finally {
       deployInFlightRef.current = false;
       setDeployPending(false);
+      // The deploy transaction is submitted but not on-chain yet, so the wallet
+      // is still busy. Re-read its queue so Issue/Deploy stay disabled until it
+      // confirms or is discarded, instead of being re-enabled immediately.
+      void refreshWalletTxState();
     }
   };
 
-  // Per-action pending flags power the button disabled state. Issue and Deploy are
-  // mutually exclusive (both submit wallet-backed transactions), while Verify
-  // access is a pure read that stays clickable no matter what Issue/Deploy are
-  // doing — it is only disabled while its own read request is in flight.
-  const busy = issuePending || deployPending;
+  // Which actions may submit a wallet transaction RIGHT NOW.
+  //
+  // Issue and Deploy both submit, so they are mutually exclusive AND both are
+  // blocked while the wallet already holds an unconfirmed transaction. That
+  // second condition is the one that matters: the wallet keeps a transaction
+  // pending after `submitTransaction` has already resolved, so gating on this
+  // app's own promises alone re-enables the buttons during exactly the window in
+  // which the wallet refuses a new one.
+  //
+  // Verify access is deliberately NOT in this lock: it reads public ledger state
+  // and submits nothing, so it stays usable while a transaction is in flight.
+  const walletTxPending = walletTxState === 'pending';
+  const txBusy = issuePending || deployPending || walletTxPending;
+  const busy = txBusy || readPending;
 
   // There is deliberately NO automatic deployment on connect. A deployment costs
   // a real on-chain fee and pops 1AM approval dialogs, so it is only ever started
@@ -454,34 +624,45 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
   const record = readActiveEventRecord();
   const hasVerifiedEvent = record?.status === 'verified';
   const isWorking = busy || phase === 'joining' || phase === 'proving';
-  const statusTone = phase === 'error' ? 'error' : phase === 'done' ? 'success' : phase === 'idle' ? 'neutral' : 'working';
+  // A pending wallet transaction is a state to wait out, not a failure, so it
+  // gets its own working tone and title instead of being reported as an error.
+  const showWalletPending = walletTxPending && phase !== 'error';
+  const statusTone =
+    phase === 'error' ? 'error' : phase === 'done' ? 'success' : phase === 'needs-event' ? 'neutral' : phase === 'idle' ? 'neutral' : 'working';
   const statusTitle =
     phase === 'error'
       ? 'We could not complete that action'
-      : phase === 'done'
-        ? 'Action complete'
-        : phase === 'joining' || phase === 'proving'
-          ? 'Working securely'
-          : !connected
-            ? 'Connect your wallet to continue'
-            : hasVerifiedEvent
-              ? 'Ready for the next action'
-              : 'No verified event yet';
+      : showWalletPending
+        ? 'Waiting for the wallet to confirm a transaction'
+        : phase === 'done'
+          ? 'Action complete'
+          : phase === 'needs-event'
+            ? 'This action needs a wallet-backed event'
+            : phase === 'joining' || phase === 'proving'
+              ? 'Working securely'
+              : !connected
+                ? 'Connect your wallet to continue'
+                : hasVerifiedEvent
+                  ? 'Ready for the next action'
+                  : 'No verified event yet';
   const statusBody =
     message ??
     (phase === 'error'
       ? 'Review the message above, then try again or open a fresh event.'
-      : phase === 'done'
-        ? 'The public ledger is refreshed below.'
-        : phase === 'joining' || phase === 'proving'
-          ? 'Keep this tab open while the wallet and network complete the request.'
-          : !connected
-            ? 'Your organizer identity stays in the wallet; no secret key is pasted into this app.'
-            : hasVerifiedEvent
-              ? 'Issue a credential for an authorized organizer or verify the current public count.'
-              : connected
-                ? 'No verified event is configured. Click "Deploy a new wallet-backed event" to make this wallet the on-chain organizer.'
-                : 'Connect an organizer wallet to create a private, wallet-backed event.');
+      : showWalletPending
+        ? 'The 1AM wallet has a transaction that is not on-chain yet, and it accepts only one at a time. Nothing further ' +
+          'will be submitted until it is confirmed or expires. "Verify access" still works — it only reads the public count.'
+        : phase === 'done'
+          ? 'The public ledger is refreshed below.'
+          : phase === 'joining' || phase === 'proving'
+            ? 'Keep this tab open while the wallet and network complete the request.'
+            : !connected
+              ? 'Your organizer identity stays in the wallet; no secret key is pasted into this app.'
+              : hasVerifiedEvent
+                ? 'Issue a credential for an authorized organizer or verify the current public count.'
+                : connected
+                  ? 'No verified event is configured. Click "Deploy a new wallet-backed event" to make this wallet the on-chain organizer.'
+                  : 'Connect an organizer wallet to create a private, wallet-backed event.');
 
   return (
     <section className="surface-card" id="access-ledger" aria-labelledby="event-title" aria-busy={isWorking}>
@@ -571,14 +752,20 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
             <button
               className="action-card action-card-primary"
               type="button"
-              disabled={!connected || busy}
+              disabled={!connected || txBusy}
               onClick={() => runCircuit('increment')}
-              title="Organizer-only: issues a credential on the active verified event"
+              title={
+                walletTxPending
+                  ? 'Waiting for the 1AM wallet to confirm its pending transaction'
+                  : 'Organizer-only: issues a credential on the active verified event'
+              }
             >
               <span className="action-card-icon" aria-hidden="true"><PlusIcon /></span>
               <span className="action-card-copy">
                 <span className="action-card-title">Issue credential</span>
-                <span className="action-card-description">Organizer-only · adds one access</span>
+                <span className="action-card-description">
+                  {walletTxPending ? 'Waiting for the wallet…' : 'Organizer-only · adds one access'}
+                </span>
               </span>
               <span className="action-card-arrow" aria-hidden="true"><ChevronRightIcon /></span>
             </button>
@@ -587,12 +774,12 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
               type="button"
               disabled={!connected || readPending}
               onClick={() => runCircuit('read')}
-              title="Read the public ledger of the active verified event"
+              title="Read the public ledger of the active verified event (a public indexer query — no proof, no transaction)"
             >
               <span className="action-card-icon" aria-hidden="true"><ScanIcon /></span>
               <span className="action-card-copy">
                 <span className="action-card-title">Verify access</span>
-                <span className="action-card-description">Read the public ledger count</span>
+                <span className="action-card-description">Read the public ledger count · no transaction</span>
               </span>
               <span className="action-card-arrow" aria-hidden="true"><ChevronRightIcon /></span>
             </button>
@@ -600,12 +787,22 @@ export const CircuitCall: React.FC<CircuitCallProps> = ({ connected, getBundle }
           <button
             className="deploy-button"
             type="button"
-            disabled={!connected || busy}
+            disabled={!connected || txBusy}
             onClick={() => deployNewEvent()}
-            title="Organizer-only: deploy a new event whose organizer identity is held by this wallet"
+            title={
+              walletTxPending
+                ? 'Waiting for the 1AM wallet to confirm its pending transaction'
+                : 'Organizer-only: deploy a new event whose organizer identity is held by this wallet'
+            }
           >
             <SparklesIcon />
-            <span>{deployPending ? 'Deploying and verifying event…' : 'Deploy a new wallet-backed event'}</span>
+            <span>
+              {deployPending
+                ? 'Deploying and verifying event…'
+                : walletTxPending
+                  ? 'Waiting for the wallet to confirm…'
+                  : 'Deploy a new wallet-backed event'}
+            </span>
             <ChevronRightIcon className="action-card-arrow" />
           </button>
         </div>

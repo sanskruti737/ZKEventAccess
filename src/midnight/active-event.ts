@@ -42,6 +42,24 @@
  * invent an event. tests/active-event.test.ts enforces that this module reads no
  * build-time environment configuration and names no build-time address variable
  * at all.
+ *
+ * ── Why a verified event can never be lost ─────────────────────────────────
+ *
+ * `localStorage.setItem` is allowed to fail while reads keep working, and the
+ * wallet-backed deploy flow cannot simply be repeated: `signData` is
+ * non-deterministic, so the organizer key behind the event cannot be
+ * re-derived, and the deployment costs a real on-chain fee. A write that was
+ * refused must therefore never be reported as a stored record, and must never
+ * delete the copy it was meant to supersede. Both of those happened, and the
+ * result was the production failure this module now guards against: a wallet
+ * that had just deployed, and had just verified, a live on-chain event was told
+ * it had "No event contract address configured" — pushed to pay for a duplicate
+ * event while the one it owned was orphaned.
+ *
+ * So a record produced here is also held in memory for the lifetime of the page
+ * (see {@link sessionRecord}), a refused superseding write leaves the value it
+ * was superseding alone, and {@link isActiveEventDurable} lets the UI say out
+ * loud when an event is real and verified but only remembered by this tab.
  */
 
 export const ACTIVE_EVENT_KEY = 'zkEventAccess.activeEvent.v1';
@@ -107,11 +125,22 @@ const readItem = (key: string): string | undefined => {
   }
 };
 
-const writeItem = (key: string, value: string): void => {
+/**
+ * True only when the value was actually handed to storage. A write can fail
+ * while reads and deletes still work — Safari private mode and ITP storage
+ * limits throw on `setItem`, a browser at quota throws `QuotaExceededError`,
+ * and a blocked third-party context throws on `localStorage` access itself.
+ * Callers that supersede data must treat `false` as "nothing was stored",
+ * never as success.
+ */
+const writeItem = (key: string, value: string): boolean => {
   try {
-    storage()?.setItem(key, value);
+    const target = storage();
+    if (!target) return false;
+    target.setItem(key, value);
+    return true;
   } catch {
-    // storage unavailable — the in-session event still works
+    return false;
   }
 };
 
@@ -122,6 +151,9 @@ const removeItem = (key: string): void => {
     // storage unavailable — nothing persisted to forget
   }
 };
+
+const shorten = (address: string): string =>
+  address.length > 26 ? `${address.slice(0, 14)}…${address.slice(-10)}` : address;
 
 const parseRecord = (raw: string | undefined): ActiveEventRecord | undefined => {
   if (!raw) return undefined;
@@ -157,17 +189,36 @@ const parseRecord = (raw: string | undefined): ActiveEventRecord | undefined => 
   };
 };
 
-const writeRecord = (record: ActiveEventRecord): void => {
-  writeItem(ACTIVE_EVENT_KEY, JSON.stringify({ v: 1, ...record }));
+/**
+ * Supersedes any legacy bare keys with the single versioned record.
+ *
+ * The delete is strictly ordered after the write and runs ONLY once the write
+ * actually landed. Deleting first (or unconditionally) destroys the one and
+ * only copy of a real, already-deployed event address whenever the v1 write is
+ * refused, leaving `readActiveEventRecord()` to report `undefined` and
+ * `requireVerifiedActiveEvent` to blame a wallet that has no event configured —
+ * pushing the user to pay for a second deployment of an event they already own.
+ * Keeping the legacy keys costs nothing: they stay fail-closed `unverified`
+ * until a later write supersedes them, and only an explicit
+ * {@link forgetActiveEvent} removes them on purpose.
+ *
+ * @returns true only when the superseding write actually landed in storage.
+ */
+const writeRecord = (record: ActiveEventRecord): boolean => {
+  const written = writeItem(ACTIVE_EVENT_KEY, JSON.stringify({ v: 1, ...record }));
+  if (!written) return false;
   // Any legacy bare keys are superseded; remove them so there is exactly one
   // source of truth and no stale value can be mistaken for a verified event.
   removeItem(LEGACY_ADDRESS_KEY);
   removeItem(LEGACY_ORGANIZER_KEY);
+  return true;
 };
 
 const migrateLegacy = (): ActiveEventRecord | undefined => {
   const address = readItem(LEGACY_ADDRESS_KEY);
+  if (!address) return undefined;
   if (!isValidContractAddress(address)) {
+    // An unusable value is safe to drop; there is no event behind it.
     removeItem(LEGACY_ADDRESS_KEY);
     removeItem(LEGACY_ORGANIZER_KEY);
     return undefined;
@@ -183,13 +234,108 @@ const migrateLegacy = (): ActiveEventRecord | undefined => {
       'connected wallet. It is not activated. Deploy a new wallet-backed event to verify ownership.',
     updatedAt: 0,
   };
+  // If the v1 write is refused, writeRecord leaves the legacy keys in place, so
+  // this address survives and a later read can retry instead of being orphaned.
   writeRecord(migrated);
   return migrated;
 };
 
-/** The stored event, migrating legacy storage on first read. `undefined` = unconfigured. */
-export const readActiveEventRecord = (): ActiveEventRecord | undefined =>
-  parseRecord(readItem(ACTIVE_EVENT_KEY)) ?? migrateLegacy();
+/**
+ * The record this page session produced, held only in memory.
+ *
+ * ── Why this exists ─────────────────────────────────────────────────────────
+ *
+ * `localStorage.setItem` is NOT atomic with respect to being available, and a
+ * deployment that finalized on-chain CANNOT be repeated for free. The failure
+ * this guards is the exact one reported from production:
+ *
+ *   1. The organizer identity is resolved, the event is deployed on-chain, and
+ *      its `organizer` cell is read back and matched — a genuinely owned,
+ *      genuinely usable event now exists.
+ *   2. `recordVerifiedActiveEvent` writes the record and returns it, so the
+ *      caller reports success.
+ *   3. The write is refused (private/incognito window, ITP storage limit,
+ *      quota exhausted, storage access blocked). Nothing is stored.
+ *   4. Every later read goes back to storage, finds nothing, and
+ *      `requireVerifiedActiveEvent` reports "No event contract address
+ *      configured. Click 'Deploy a new wallet-backed event'" — for a wallet
+ *      that owns a live event, whose address has just been orphaned and whose
+ *      organizer key cannot be re-derived (`signData` is non-deterministic).
+ *
+ * A verified record is therefore also kept in memory for the lifetime of the
+ * page, so a refused write costs the user nothing for the session they are in.
+ *
+ * ── Why this is not a hole in the verification gate ─────────────────────────
+ *
+ * The mirror can only ever hold a record that these functions produced, and the
+ * only way to produce a `verified` one is {@link recordVerifiedActiveEvent} —
+ * which is reached exclusively after an on-chain `organizer` comparison
+ * succeeded. It can never invent authority, promote an unverified deployment, or
+ * resurrect an address that was invalidated. It is not persisted, so it cannot
+ * outlive the tab, and it is cleared by {@link forgetActiveEvent}.
+ *
+ * It is also never allowed to ADD authority over a stored record: see
+ * {@link readActiveEventRecord}, which spells out the single exception it is
+ * allowed.
+ */
+let sessionRecord: ActiveEventRecord | undefined;
+
+/**
+ * How much authority a status carries, so two records can be compared.
+ *
+ * This exists for exactly one decision — which record wins when storage and the
+ * in-session mirror disagree — and it is ordered so that comparing two records
+ * can only ever fail CLOSED. `verified` is the most authority an event can
+ * carry, a deployment whose organizer was never checked has less, and an event
+ * that was rejected has none.
+ */
+const authorityRank = (status: ActiveEventStatus): number =>
+  status === 'verified' ? 2 : status === 'unverified' ? 1 : 0;
+
+/**
+ * The current active event: what storage holds — except where this page has
+ * itself proved that record is no longer usable.
+ *
+ * Storage is the source of truth and is believed on its own, including when it
+ * says `verified`: an event another session stored is never silently swapped out
+ * from under the actions reading it, and a leftover legacy bare address is
+ * fail-closed `unverified` and therefore never usable, so it is never authority
+ * over a record this page established.
+ *
+ * There is exactly ONE thing storage cannot be believed about: a status this
+ * page has already moved past. A refused write must never be a licence to keep
+ * acting on an event this wallet does not own, so a mirror record with LESS
+ * authority than the stored one wins for the rest of the page. Without that,
+ * `invalidateActiveEvent` on a quota-exhausted browser would keep reporting
+ * `verified`, and `requireVerifiedActiveEvent` would keep handing the app an
+ * address it had just rejected. The mirror can still never add authority over a
+ * stored record, so the comparison fails closed in both directions:
+ *
+ *   - a tampered or unparseable stored record is ignored outright, never
+ *     repaired from memory and never promoted to `verified`;
+ *   - an `invalidated` stored record stays unusable, so a rejected address is
+ *     never resurrected from memory;
+ *   - a refused write while an older verified event is still stored leaves that
+ *     older event in place, rather than activating an address this browser
+ *     cannot record;
+ *   - where storage holds no versioned record at all, the mirror gap-fills,
+ *     which is the refused-write case this file exists to survive.
+ */
+export const readActiveEventRecord = (): ActiveEventRecord | undefined => {
+  const rawStored = readItem(ACTIVE_EVENT_KEY);
+  if (rawStored !== undefined) {
+    const stored = parseRecord(rawStored);
+    // A tampered or unparseable value is ignored, never repaired from memory.
+    if (!stored) return undefined;
+    if (sessionRecord && authorityRank(sessionRecord.status) < authorityRank(stored.status)) return sessionRecord;
+    return stored;
+  }
+  // Also retries a pending legacy migration, which supersedes the legacy keys as
+  // soon as writes are accepted again.
+  const legacy = migrateLegacy();
+  if (sessionRecord) return sessionRecord;
+  return legacy;
+};
 
 /**
  * The ONLY address that "Issue credential" and "Verify access" may act on.
@@ -228,6 +374,7 @@ export const recordUnverifiedDeployment = (address: string): ActiveEventRecord |
     reason: 'Deployed on-chain, but its on-chain organizer commitment has not been verified against the connected wallet yet.',
     updatedAt: Date.now(),
   };
+  sessionRecord = record;
   writeRecord(record);
   return record;
 };
@@ -245,6 +392,7 @@ export const recordVerifiedActiveEvent = (address: string, organizer: string): A
     organizer: organizer.trim(),
     updatedAt: Date.now(),
   };
+  sessionRecord = record;
   writeRecord(record);
   return record;
 };
@@ -263,16 +411,61 @@ export const invalidateActiveEvent = (
   const current = readActiveEventRecord();
   if (!current) return undefined;
   const record: ActiveEventRecord = { ...current, status, reason, updatedAt: Date.now() };
+  // An invalidated event is never usable, so it also must not stay usable
+  // through the in-session record if its write to storage is refused.
+  sessionRecord = record;
   writeRecord(record);
   return record;
 };
 
 /** Explicit, user-requested removal. Never called from an error path. */
 export const forgetActiveEvent = (): void => {
+  sessionRecord = undefined;
   removeItem(ACTIVE_EVENT_KEY);
   removeItem(LEGACY_ADDRESS_KEY);
   removeItem(LEGACY_ORGANIZER_KEY);
 };
+
+/**
+ * Drops the in-memory session record ONLY, leaving storage untouched.
+ *
+ * The mirror is page-lifetime state, so a test file that drives many scenarios
+ * against one imported module instance would otherwise let a record established
+ * by an earlier test leak into a later one that expects a clean slate. Production
+ * code never calls this: the only real-world clear is the user-requested
+ * {@link forgetActiveEvent}, which also removes the persisted record.
+ */
+export const resetActiveEventSession = (): void => {
+  sessionRecord = undefined;
+};
+
+/**
+ * True when the active event is durably stored, i.e. it survives a reload.
+ *
+ * False means the browser refused the write: the event is real and verified,
+ * and usable for as long as this page stays open, but a refresh would lose it.
+ * The UI must say so rather than implying the event is safely remembered.
+ */
+export const isActiveEventDurable = (): boolean => {
+  const current = readActiveEventRecord();
+  if (!current) return false;
+  const stored = parseRecord(readItem(ACTIVE_EVENT_KEY));
+  return stored?.address === current.address && stored?.status === current.status;
+};
+
+/**
+ * Truthful wording for a verified event this browser could not store.
+ *
+ * It states the two facts the user needs — the event IS on-chain and owned by
+ * this wallet, and the address will be lost on refresh — instead of letting the
+ * app claim a successful, remembered configuration it does not have.
+ */
+export const activeEventNotPersistedMessage = (address: string): string =>
+  `This browser refused to save event ${shorten(address)}, so it is active for this page only and will be ` +
+  `forgotten on refresh. The event itself is on-chain and its organizer was verified — nothing needs to be ` +
+  `deployed again now, but this browser cannot remember it. Allow site storage for this app (and avoid ` +
+  `private/incognito windows or a full disk), then reload and deploy once more if you need the event to ` +
+  `survive a refresh.`;
 
 /**
  * True when an error means "this event was deployed from a DIFFERENT contract
@@ -298,8 +491,37 @@ export const staleContractBuildCircuits = (err: unknown): string[] => {
   return Array.isArray(circuitIds) ? circuitIds.filter((id): id is string => typeof id === 'string') : [];
 };
 
-const shorten = (address: string): string =>
-  address.length > 26 ? `${address.slice(0, 14)}…${address.slice(-10)}` : address;
+/**
+ * True when the WALLET refused a request because it already has a transaction
+ * waiting to be confirmed.
+ *
+ * The 1AM wallet accepts one pending transaction at a time, so this is what a
+ * second concurrent submission looks like. It is not a contract failure, not an
+ * authorization failure, and not something a retry fixes on its own — the
+ * pending transaction has to confirm or expire first.
+ *
+ * It lives here, beside {@link isStaleContractBuildError}, because both exist
+ * for the same reason: the UI must recognise an SDK/wallet error it did not
+ * author and explain it truthfully instead of printing a raw message.
+ */
+export const isTransactionPendingError = (err: unknown): boolean => {
+  if (typeof err !== 'object' || err === null) return false;
+  const { message } = err as { message?: unknown };
+  return typeof message === 'string' && /a transaction is already pending/i.test(message);
+};
+
+/**
+ * Truthful explanation of a transaction the wallet declined to accept.
+ *
+ * Says what was refused and what it means — nothing was issued, nothing changed
+ * on the event — and gives the one action that can actually clear it. It never
+ * implies the request succeeded and never suggests retrying into the same wall.
+ */
+export const transactionPendingMessage = (): string =>
+  `The 1AM wallet already has a transaction waiting to be confirmed, so it refused this one. Nothing was issued and ` +
+  `nothing was changed on the event. Wait for the pending transaction to be included on-chain (or to expire), then ` +
+  `try again. This wallet accepts one transaction at a time, so "Issue credential" and "Verify access" cannot be ` +
+  `run at the same time.`;
 
 /**
  * Truthful explanation of a stale-build event, including what the app does about
